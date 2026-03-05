@@ -1,105 +1,120 @@
 local M = {}
 
 local catalog = require("nvim-buffergator.catalog")
+local ns      = vim.api.nvim_create_namespace("nvim-buffergator")
 
--- Highlight namespace (created once)
-local ns = vim.api.nvim_create_namespace("nvim-buffergator")
+-- Number of non-entry lines at the top (branch header + blank separator)
+M.HEADER_LINES = 2
 
--- Build a single display line and its highlight ranges
--- Format: [ 42] >+  filename.lua          lua/plugins
-local function build_line(entry)
-  local num_str    = string.format("[%3d]", entry.bufnr)
+-- Prefix layout: [NNN] CMG  <basename>   <parent>
+--   [NNN] = 5  space = 1  C = 1  M = 1  G = 1  "  " = 2  → basename at col 10
+local PREFIX = 10   -- 0-indexed col where basename starts
 
-  local cur_flag  = entry.current   and ">" or (entry.alternate and "#" or " ")
-  local mod_flag  = entry.modified  and "+" or " "
-  local flags     = cur_flag .. mod_flag .. "  "          -- 4 chars
+-- Git status -> highlight group
+local git_hl = {
+  M = "DiagnosticWarn",
+  A = "DiagnosticInfo",
+  D = "DiagnosticError",
+  R = "DiagnosticInfo",
+  ["?"] = "Comment",
+}
 
-  local basename  = entry.basename
-  local parent    = entry.parent
+local function build_line(entry, name_col_width)
+  local num_str  = string.format("[%3d]", entry.bufnr)
+  local cur_flag = entry.current  and ">" or (entry.alternate and "#" or " ")
+  local mod_flag = entry.modified and "+" or " "
+  local git_flag = (entry.git_status ~= " ") and entry.git_status or " "
 
-  local name_col  = 7                                     -- after "[NNN] "
-  local line      = num_str .. " " .. flags .. basename
+  local basename = entry.basename
+  local parent   = entry.parent
 
-  -- Pad basename to a fixed width before parent
-  local pad_to = 28
-  local pad = pad_to - #line
+  -- Build fixed-layout line
+  local line = num_str .. " " .. cur_flag .. mod_flag .. git_flag .. "  " .. basename
+
+  -- Pad basename field to name_col_width so parent dirs align
+  local pad = (PREFIX + name_col_width + 2) - #line
   if pad > 0 then
     line = line .. string.rep(" ", pad)
   else
     line = line .. "  "
   end
 
-  local parent_start = #line
+  local parent_col = #line
   if parent ~= "" then
     line = line .. parent
   end
 
-  -- Highlight ranges: {hl_group, col_start, col_end}
-  local highlights = {}
+  -- Highlights: {group, col_start, col_end}  (0-indexed byte cols)
+  local hl = {}
+  hl[#hl+1] = { "Comment", 0, 5 }                           -- [NNN]
 
-  -- Buffer number: dimmed
-  highlights[#highlights + 1] = { "Comment", 0, 5 }
-
-  -- Current marker
   if entry.current then
-    highlights[#highlights + 1] = { "Statement", 6, 7 }
+    hl[#hl+1] = { "Statement", 6, 7 }
   elseif entry.alternate then
-    highlights[#highlights + 1] = { "Special", 6, 7 }
+    hl[#hl+1] = { "Special", 6, 7 }
   end
 
-  -- Modified marker
   if entry.modified then
-    highlights[#highlights + 1] = { "DiagnosticWarn", 7, 8 }
+    hl[#hl+1] = { "DiagnosticWarn", 7, 8 }
   end
 
-  -- Filename: bold
-  highlights[#highlights + 1] = { "Bold", name_col, name_col + #basename }
+  local ghl = git_hl[entry.git_status]
+  if ghl then
+    hl[#hl+1] = { ghl, 8, 9 }
+  end
 
-  -- Parent dir: dimmed
+  hl[#hl+1] = { "Bold", PREFIX, PREFIX + #basename }         -- filename
+
   if parent ~= "" then
-    highlights[#highlights + 1] = { "Comment", parent_start, parent_start + #parent }
+    hl[#hl+1] = { "Comment", parent_col, parent_col + #parent }
   end
 
-  return line, highlights
+  return line, hl
 end
 
--- Render entries into sidebar buffer; returns max line width
+-- Render into sidebar buffer; returns max display width
 function M.render(sidebar_bufnr)
+  local branch  = catalog.get_git_branch()
   local entries = catalog.get_buffers()
-  local lines   = {}
-  local all_hl  = {}
 
-  for i, entry in ipairs(entries) do
-    local line, hls = build_line(entry)
-    lines[i]   = line
-    all_hl[i]  = hls
+  -- Calculate max basename length for column alignment
+  local max_name = 12  -- minimum
+  for _, e in ipairs(entries) do
+    if #e.basename > max_name then max_name = #e.basename end
+  end
+
+  -- Header lines
+  local header = branch
+    and ("  \u{e0a0} " .. branch)    -- nerd-font branch icon, falls back gracefully
+    or  "  [no git]"
+  local lines  = { header, "" }
+  local all_hl = { {}, {} }
+
+  for _, entry in ipairs(entries) do
+    local line, hl = build_line(entry, max_name)
+    lines[#lines+1]   = line
+    all_hl[#all_hl+1] = hl
   end
 
   vim.bo[sidebar_bufnr].modifiable = true
   vim.api.nvim_buf_set_lines(sidebar_bufnr, 0, -1, false, lines)
   vim.bo[sidebar_bufnr].modifiable = false
 
-  -- Clear old highlights and apply new ones
   vim.api.nvim_buf_clear_namespace(sidebar_bufnr, ns, 0, -1)
-  for row, hls in ipairs(all_hl) do
-    for _, hl in ipairs(hls) do
-      vim.api.nvim_buf_add_highlight(sidebar_bufnr, ns, hl[1], row - 1, hl[2], hl[3])
+  -- Header highlight
+  vim.api.nvim_buf_add_highlight(sidebar_bufnr, ns, "Title", 0, 0, -1)
+
+  for row, hl in ipairs(all_hl) do
+    for _, h in ipairs(hl) do
+      vim.api.nvim_buf_add_highlight(sidebar_bufnr, ns, h[1], row - 1, h[2], h[3])
     end
   end
 
-  -- Return max line width for auto-resize
   local max_width = 0
   for _, l in ipairs(lines) do
     if #l > max_width then max_width = #l end
   end
-  return max_width, entries
-end
-
--- Map from display row (1-based) back to bufnr
-function M.bufnr_at_line(line_nr)
-  local entries = catalog.get_buffers()
-  local e = entries[line_nr]
-  return e and e.bufnr or nil
+  return max_width
 end
 
 return M
