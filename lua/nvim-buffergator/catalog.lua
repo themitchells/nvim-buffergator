@@ -72,11 +72,21 @@ local sorters = {
   end,
 }
 
-function M.get_buffers()
-  local current   = vim.api.nvim_get_current_buf()
-  local alternate = vim.fn.bufnr("#")
-  local git_st    = get_git_statuses()
+-- context_win: the user's working window (not the sidebar).
+-- If nil, falls back to the current window (fine for refresh from BufEnter etc.).
+function M.get_buffers(context_win)
+  local current, alternate
+  if context_win and vim.api.nvim_win_is_valid(context_win) then
+    current   = vim.api.nvim_win_get_buf(context_win)
+    alternate = vim.api.nvim_win_call(context_win, function()
+      return vim.fn.bufnr("#")
+    end)
+  else
+    current   = vim.api.nvim_get_current_buf()
+    alternate = vim.fn.bufnr("#")
+  end
 
+  local git_st = get_git_statuses()
   local entries = {}
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if is_valid(bufnr) then

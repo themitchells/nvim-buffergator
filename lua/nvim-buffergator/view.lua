@@ -43,14 +43,18 @@ end
 local function apply_resize(win, max_width)
   if config.options.auto_resize then
     local opts  = config.options
-    local width = math.max(opts.min_width, math.min(opts.max_width, max_width + 2))
+    local width = math.max(opts.min_width, math.min(opts.max_width, max_width))
     vim.api.nvim_win_set_width(win, width)
   end
 end
 
 function M.refresh()
   if not M.is_open() then return end
-  local max_width = renderer.render(state.bufnr)
+  -- When triggered while inside the sidebar (e.g. BufEnter on the nofile
+  -- buffer itself), fall back to prev_win so current/alternate resolve correctly.
+  local context_win = vim.api.nvim_get_current_win()
+  if context_win == state.win then context_win = state.prev_win end
+  local max_width = renderer.render(state.bufnr, context_win)
   apply_resize(state.win, max_width)
 end
 
@@ -87,14 +91,14 @@ function M.open()
     vim.b[bufnr]._buffergator_keymaps_set = true
   end
 
-  -- Render and resize
-  local max_width = renderer.render(bufnr)
+  -- Render with correct context so current/alternate flags resolve against
+  -- the window the user was in (not the sidebar nofile buffer).
+  local max_width, entries = renderer.render(bufnr, state.prev_win)
   apply_resize(win, max_width)
 
   -- Position cursor on the active buffer's entry (fall back to first entry)
-  local prev_buf  = vim.api.nvim_win_get_buf(state.prev_win)
-  local entries   = require("nvim-buffergator.catalog").get_buffers()
-  local target    = renderer.HEADER_LINES + 1
+  local prev_buf = vim.api.nvim_win_get_buf(state.prev_win)
+  local target   = renderer.HEADER_LINES + 1
   for i, e in ipairs(entries) do
     if e.bufnr == prev_buf then
       target = renderer.HEADER_LINES + i

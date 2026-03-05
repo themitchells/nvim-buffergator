@@ -3,14 +3,12 @@ local M = {}
 local catalog = require("nvim-buffergator.catalog")
 local ns      = vim.api.nvim_create_namespace("nvim-buffergator")
 
--- Number of non-entry lines at the top (branch header + blank separator)
-M.HEADER_LINES = 2
+local HEADER_LINES = 2
+M.HEADER_LINES = HEADER_LINES
 
--- Prefix layout: [NNN] CMG  <basename>   <parent>
---   [NNN] = 5  space = 1  C = 1  M = 1  G = 1  "  " = 2  → basename at col 10
-local PREFIX = 10   -- 0-indexed col where basename starts
+-- Prefix: [NNN]=5  ' '=1  C=1  M=1  G=1  "  "=2  → 11 chars, basename at col 11
+local PREFIX = 11
 
--- Git status -> highlight group
 local git_hl = {
   M = "DiagnosticWarn",
   A = "DiagnosticInfo",
@@ -19,34 +17,32 @@ local git_hl = {
   ["?"] = "Comment",
 }
 
-local function build_line(entry, name_col_width)
+-- Line format: [NNN] CMG  basename  parent/dir
+-- Padding after basename ensures parent always starts at col PREFIX+max_name+2,
+-- so the width formula can reliably hide it by stopping at PREFIX+max_name+1.
+local function build_line(entry, max_name)
   local num_str  = string.format("[%3d]", entry.bufnr)
   local cur_flag = entry.current  and ">" or (entry.alternate and "#" or " ")
   local mod_flag = entry.modified and "+" or " "
   local git_flag = (entry.git_status ~= " ") and entry.git_status or " "
-
   local basename = entry.basename
   local parent   = entry.parent
 
-  -- Build fixed-layout line
+  -- Build prefix+basename portion (exactly PREFIX + #basename chars)
   local line = num_str .. " " .. cur_flag .. mod_flag .. git_flag .. "  " .. basename
 
-  -- Pad basename field to name_col_width so parent dirs align
-  local pad = (PREFIX + name_col_width + 2) - #line
-  if pad > 0 then
-    line = line .. string.rep(" ", pad)
-  else
-    line = line .. "  "
-  end
+  -- Pad so parent always starts at the same column: PREFIX + max_name + 2
+  local parent_col = PREFIX + max_name + 2
+  local pad = parent_col - #line   -- always ≥ 2 since max_name ≥ #basename
+  line = line .. string.rep(" ", pad)
 
-  local parent_col = #line
+  local parent_start = #line
   if parent ~= "" then
     line = line .. parent
   end
 
-  -- Highlights: {group, col_start, col_end}  (0-indexed byte cols)
   local hl = {}
-  hl[#hl+1] = { "Comment", 0, 5 }                           -- [NNN]
+  hl[#hl+1] = { "Comment", 0, 5 }
 
   if entry.current then
     hl[#hl+1] = { "Statement", 6, 7 }
@@ -63,30 +59,25 @@ local function build_line(entry, name_col_width)
     hl[#hl+1] = { ghl, 8, 9 }
   end
 
-  hl[#hl+1] = { "Bold", PREFIX, PREFIX + #basename }         -- filename
+  hl[#hl+1] = { "Bold", PREFIX, PREFIX + #basename }
 
   if parent ~= "" then
-    hl[#hl+1] = { "Comment", parent_col, parent_col + #parent }
+    hl[#hl+1] = { "Comment", parent_start, parent_start + #parent }
   end
 
   return line, hl
 end
 
--- Render into sidebar buffer; returns max display width
-function M.render(sidebar_bufnr)
+function M.render(sidebar_bufnr, context_win)
   local branch  = catalog.get_git_branch()
-  local entries = catalog.get_buffers()
+  local entries = catalog.get_buffers(context_win)
 
-  -- Calculate max basename length for column alignment
-  local max_name = 12  -- minimum
+  local max_name = 12
   for _, e in ipairs(entries) do
     if #e.basename > max_name then max_name = #e.basename end
   end
 
-  -- Header lines
-  local header = branch
-    and ("  \u{e0a0} " .. branch)    -- nerd-font branch icon, falls back gracefully
-    or  "  [no git]"
+  local header = branch and ("  @ " .. branch) or "  [no git]"
   local lines  = { header, "" }
   local all_hl = { {}, {} }
 
@@ -101,7 +92,6 @@ function M.render(sidebar_bufnr)
   vim.bo[sidebar_bufnr].modifiable = false
 
   vim.api.nvim_buf_clear_namespace(sidebar_bufnr, ns, 0, -1)
-  -- Header highlight
   vim.api.nvim_buf_add_highlight(sidebar_bufnr, ns, "Title", 0, 0, -1)
 
   for row, hl in ipairs(all_hl) do
@@ -110,11 +100,13 @@ function M.render(sidebar_bufnr)
     end
   end
 
-  local max_width = 0
-  for _, l in ipairs(lines) do
-    if #l > max_width then max_width = #l end
-  end
-  return max_width
+  -- Width sized to filename column only. Parent always starts at PREFIX+max_name+2,
+  -- so setting width = PREFIX+max_name+1 puts the parent one col past the window edge.
+  -- Do NOT include header in the max — a long branch name must not widen the window
+  -- past the filename column or it would expose the start of parent paths.
+  local max_width = PREFIX + max_name + 1
+
+  return max_width, entries
 end
 
 return M
