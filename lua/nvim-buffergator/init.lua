@@ -66,6 +66,18 @@ function M.setup(user_opts)
     callback = debounced_refresh,
   })
 
+  -- Track which editing window the user is in so <CR> always opens
+  -- in the window they most recently focused, not the one from sidebar open.
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group    = grp,
+    callback = function()
+      local win = vim.api.nvim_get_current_win()
+      if view.is_open() and win ~= view.get_win() then
+        view.set_prev_win(win)
+      end
+    end,
+  })
+
   -- Close sidebar if it becomes the last window
   vim.api.nvim_create_autocmd("WinEnter", {
     group    = grp,

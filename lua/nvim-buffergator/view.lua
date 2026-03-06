@@ -80,6 +80,10 @@ end
 function M.get_win()   return state.win   end
 function M.get_bufnr() return state.bufnr end
 
+function M.set_prev_win(win)
+  state.prev_win = win
+end
+
 function M.get_prev_win()
   if state.prev_win and vim.api.nvim_win_is_valid(state.prev_win) then
     return state.prev_win
