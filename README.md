@@ -23,8 +23,7 @@ Full rewrite of [vim-buffergator](https://github.com/jeetsukumaran/vim-buffergat
 
 ```lua
 {
-    dir  = "~/path/to/nvim-buffergator",
-    name = "nvim-buffergator",
+    "themitchells/nvim-buffergator",
     config = function()
         require("nvim-buffergator").setup({
             sort            = "filepath",
