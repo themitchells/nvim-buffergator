@@ -32,10 +32,11 @@ M.defaults = {
   close_on_select = true,
 
   -- Filename display mode (mirrors lualine's path option).
-  --   0  filename only — parent directory shown off-screen to the right
-  --   1  relative path — no separate parent column  (default recommended)
-  --   2  absolute path — no separate parent column
-  --   3  tilde-relative — no separate parent column
+  --   0  filename only      — parent shown off-screen to the right
+  --   1  relative path      — no separate parent column  (default recommended)
+  --   2  absolute path      — no separate parent column
+  --   3  tilde-relative     — no separate parent column
+  --   4  parent + filename  — one directory level: "plugins/init.lua"
   path = 0,
 
   -- Buffer-local keymaps active while the sidebar has focus.

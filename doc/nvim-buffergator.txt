@@ -22,7 +22,7 @@ nvim-buffergator is a sidebar buffer list for Neovim, written in Lua.
 Features:
   • Left-side vertical split sidebar, auto-sized to fit filenames
   • Four sort modes: filepath, bufnum, basename, MRU
-  • Four filename display modes (path=0-3, mirrors lualine)
+  • Four filename display modes (path=0-4, mirrors lualine)
   • Per-file git status flags and filename colouring
   • Git branch shown in the header
   • Asynchronous git operations — sidebar opens instantly
@@ -54,7 +54,7 @@ Call setup() from your plugin config (lazy.nvim example): >lua
 :BuffergatorClose                 Close the sidebar.
 :BuffergatorToggle                Toggle the sidebar.
 
-:BuffergatorPath {n}              Set filename display mode (0-3) at runtime.
+:BuffergatorPath {n}              Set filename display mode (0-4) at runtime.
                                   See |nvim-buffergator-config| for values.
 
 :BuffergatorSort {mode}           Set sort mode at runtime.
@@ -110,6 +110,7 @@ Pass a partial table to setup(); unset keys use the defaults shown below. >lua
         --   1  relative path
         --   2  absolute path
         --   3  tilde-relative path
+        --   4  parent + filename  ("plugins/init.lua")
         path = 0,
 
         keymaps = {
@@ -176,6 +177,7 @@ Each buffer entry is rendered as: >
                    1  relative path (lua/plugins/init.lua)
                    2  absolute path (/home/user/…/init.lua)
                    3  tilde-relative (~/.config/nvim/…/init.lua)
+                   4  parent + filename (plugins/init.lua)
   parent/dir     Path=0 only: parent directory, shown off-screen to the
                  right at default width; visible when sidebar is widened.
 

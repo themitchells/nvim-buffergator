@@ -7,7 +7,7 @@ Full rewrite of [vim-buffergator](https://github.com/jeetsukumaran/vim-buffergat
 
 - Left vertical split sidebar, auto-sized to the filename column
 - Four sort modes: `filepath`, `bufnum`, `basename`, `mru` — cycle with `S`
-- Four filename display modes (mirrors lualine `path` option 0–3)
+- Four filename display modes (mirrors lualine `path` option 0–4)
 - Per-file git status flags with filename colouring by dirty state
 - Git branch shown in the header; multi-repo git status support
 - Asynchronous git operations — sidebar opens instantly
@@ -57,7 +57,7 @@ Full rewrite of [vim-buffergator](https://github.com/jeetsukumaran/vim-buffergat
 | `:BuffergatorToggle` | Toggle sidebar |
 | `:BuffergatorOpen` | Open sidebar |
 | `:BuffergatorClose` | Close sidebar |
-| `:BuffergatorPath {0-3}` | Set filename display mode |
+| `:BuffergatorPath {0-4}` | Set filename display mode |
 | `:BuffergatorSort {mode}` | Set sort mode (tab-completable) |
 
 ## Configuration

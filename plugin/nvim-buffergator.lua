@@ -15,22 +15,23 @@ vim.api.nvim_create_user_command("BuffergatorToggle", function()
   require("nvim-buffergator").toggle()
 end, { desc = "Toggle the nvim-buffergator sidebar" })
 
--- :BuffergatorPath {0|1|2|3}
+-- :BuffergatorPath {0|1|2|3|4}
 -- Change the filename display mode at runtime without editing the config.
 -- Useful for testing; persist the choice by setting path= in setup().
---   0  filename only  (parent shown off-screen to the right)
+--   0  filename only      (parent shown off-screen to the right)
 --   1  relative path
 --   2  absolute path
 --   3  tilde-relative
+--   4  parent + filename  ("plugins/init.lua")
 vim.api.nvim_create_user_command("BuffergatorPath", function(opts)
   local n = tonumber(opts.args)
-  if not n or not vim.tbl_contains({0, 1, 2, 3}, n) then
-    vim.notify("BuffergatorPath: expected 0, 1, 2, or 3", vim.log.levels.ERROR)
+  if not n or not vim.tbl_contains({0, 1, 2, 3, 4}, n) then
+    vim.notify("BuffergatorPath: expected 0, 1, 2, 3, or 4", vim.log.levels.ERROR)
     return
   end
   require("nvim-buffergator.config").options.path = n
   require("nvim-buffergator.view").refresh()
-end, { nargs = 1, desc = "Set nvim-buffergator path display mode (0-3)" })
+end, { nargs = 1, desc = "Set nvim-buffergator path display mode (0-4)" })
 
 -- :BuffergatorSort {filepath|bufnum|basename|mru}
 -- Change the sort mode at runtime.

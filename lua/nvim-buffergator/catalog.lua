@@ -240,6 +240,11 @@ local function make_entry(bufnr, current, alternate)
   elseif path_opt == 3 then
     display_name = vim.fn.fnamemodify(name, ":~")   -- tilde-abbreviated
     parent       = ""
+  elseif path_opt == 4 then
+    -- Immediate parent directory + filename: "plugins/buffergator.lua"
+    local parent_dir = vim.fn.fnamemodify(name, ":h:t")
+    display_name = parent_dir ~= "" and (parent_dir .. "/" .. basename) or basename
+    parent       = ""
   else  -- path_opt == 0
     display_name = basename
     parent       = vim.fn.fnamemodify(name, ":h:~:.")
