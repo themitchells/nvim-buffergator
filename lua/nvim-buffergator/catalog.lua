@@ -8,28 +8,54 @@ local function is_valid(bufnr)
     and vim.bo[bufnr].buftype == ""
 end
 
--- Run git status --porcelain once and return a map: abs_path -> status_char
-local function get_git_statuses()
-  local cwd = vim.fn.getcwd()
-  local output = vim.fn.systemlist(
-    "git -C " .. vim.fn.shellescape(cwd) .. " status --porcelain 2>/dev/null"
-  )
-  if vim.v.shell_error ~= 0 then return {} end
-  local result = {}
-  for _, line in ipairs(output) do
-    if #line >= 4 then
-      local xy   = line:sub(1, 2)
-      local path = line:sub(4):gsub("%s+$", "")
-      -- Renames: "old -> new" — take the destination
-      path = path:match("^.* %-> (.+)$") or path
-      local abs = cwd .. "/" .. path
-      -- Prefer working-tree char (col 2), fall back to index char (col 1)
-      local s = xy:sub(2, 2)
-      if s == " " then s = xy:sub(1, 1) end
-      result[abs] = s
+-- Find the git repo root for a given directory.
+-- Uses a per-call cache (dir_cache) to avoid redundant git invocations
+-- when multiple buffers live in the same directory.
+local function find_repo_root(dir, dir_cache)
+  if dir_cache[dir] ~= nil then return dir_cache[dir] end
+  local root = vim.fn.system(
+    "git -C " .. vim.fn.shellescape(dir) .. " rev-parse --show-toplevel 2>/dev/null"
+  ):gsub("%s+$", "")
+  local result = (vim.v.shell_error == 0 and root ~= "") and root or false
+  dir_cache[dir] = result
+  return result
+end
+
+-- Collect git statuses for every unique repo that contains open buffers.
+-- Returns a map: abs_path -> status_char
+local function get_git_statuses(buf_names)
+  local dir_cache  = {}
+  local repo_roots = {}   -- root -> true
+
+  for _, name in ipairs(buf_names) do
+    if name ~= "" then
+      local dir  = vim.fn.fnamemodify(name, ":h")
+      local root = find_repo_root(dir, dir_cache)
+      if root then repo_roots[root] = true end
     end
   end
-  return result
+
+  local statuses = {}
+  for root in pairs(repo_roots) do
+    local lines = vim.fn.systemlist(
+      "git -C " .. vim.fn.shellescape(root) .. " status --porcelain 2>/dev/null"
+    )
+    if vim.v.shell_error == 0 then
+      for _, line in ipairs(lines) do
+        if #line >= 4 then
+          local xy   = line:sub(1, 2)
+          local path = line:sub(4):gsub("%s+$", "")
+          path = path:match("^.* %-> (.+)$") or path
+          local abs = root .. "/" .. path
+          local s   = xy:sub(2, 2)
+          if s == " " then s = xy:sub(1, 1) end
+          statuses[abs] = s
+        end
+      end
+    end
+  end
+
+  return statuses
 end
 
 function M.get_git_branch()
@@ -86,12 +112,20 @@ function M.get_buffers(context_win)
     alternate = vim.fn.bufnr("#")
   end
 
-  local git_st = get_git_statuses()
-  local entries = {}
+  -- Collect names first so git status can batch by repo
+  local valid_bufs = {}
+  local buf_names  = {}
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if is_valid(bufnr) then
-      entries[#entries + 1] = make_entry(bufnr, current, alternate, git_st)
+      valid_bufs[#valid_bufs + 1] = bufnr
+      buf_names[#buf_names + 1]   = vim.api.nvim_buf_get_name(bufnr)
     end
+  end
+
+  local git_st  = get_git_statuses(buf_names)
+  local entries = {}
+  for _, bufnr in ipairs(valid_bufs) do
+    entries[#entries + 1] = make_entry(bufnr, current, alternate, git_st)
   end
 
   local sort_fn = sorters[config.options.sort] or sorters.filepath
