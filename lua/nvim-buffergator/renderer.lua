@@ -3,7 +3,7 @@ local M = {}
 local catalog = require("nvim-buffergator.catalog")
 local ns      = vim.api.nvim_create_namespace("nvim-buffergator")
 
-local HEADER_LINES = 2
+local HEADER_LINES = 1
 M.HEADER_LINES = HEADER_LINES
 
 -- Prefix: [NNN]=5  ' '=1  C=1  M=1  G=1  "  "=2  → 11 chars, basename at col 11
@@ -16,6 +16,22 @@ local git_hl = {
   R = "DiagnosticInfo",
   ["?"] = "Comment",
 }
+
+-- Named highlight groups for filename coloring.
+-- Defined here so they survive ColorScheme changes and can be overridden by users.
+local function def_name_hls()
+  local warn = vim.api.nvim_get_hl(0, { name = "DiagnosticWarn",  link = false })
+  local info = vim.api.nvim_get_hl(0, { name = "DiagnosticInfo",  link = false })
+  local err  = vim.api.nvim_get_hl(0, { name = "DiagnosticError", link = false })
+  -- Buffer dirty only: yellow
+  vim.api.nvim_set_hl(0, "NvimBuffergatorBufDirty",  { fg = warn.fg, bold = true })
+  -- Git dirty only: cyan
+  vim.api.nvim_set_hl(0, "NvimBuffergatorGitDirty",  { fg = info.fg })
+  -- Both: red + bold + underline — distinct from yellow even on similar-toned themes
+  vim.api.nvim_set_hl(0, "NvimBuffergatorBothDirty", { fg = err.fg, bold = true, underline = true })
+end
+def_name_hls()
+vim.api.nvim_create_autocmd("ColorScheme", { callback = def_name_hls })
 
 -- Line format: [NNN] CMG  basename  parent/dir
 -- Padding after basename ensures parent always starts at col PREFIX+max_name+2,
@@ -59,7 +75,19 @@ local function build_line(entry, max_name)
     hl[#hl+1] = { ghl, 8, 9 }
   end
 
-  hl[#hl+1] = { "Bold", PREFIX, PREFIX + #basename }
+  local buf_dirty = entry.modified
+  local git_dirty = entry.git_status ~= " "
+  local name_hl
+  if buf_dirty and git_dirty then
+    name_hl = "NvimBuffergatorBothDirty"  -- red + bold + underline
+  elseif buf_dirty then
+    name_hl = "NvimBuffergatorBufDirty"   -- yellow bold
+  elseif git_dirty then
+    name_hl = "NvimBuffergatorGitDirty"   -- cyan
+  else
+    name_hl = "Bold"
+  end
+  hl[#hl+1] = { name_hl, PREFIX, PREFIX + #basename }
 
   if parent ~= "" then
     hl[#hl+1] = { "Comment", parent_start, parent_start + #parent }
@@ -78,8 +106,8 @@ function M.render(sidebar_bufnr, context_win)
   end
 
   local header = branch and ("  @ " .. branch) or "  [no git]"
-  local lines  = { header, "" }
-  local all_hl = { {}, {} }
+  local lines  = { header }
+  local all_hl = { {} }
 
   for _, entry in ipairs(entries) do
     local line, hl = build_line(entry, max_name)

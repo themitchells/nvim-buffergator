@@ -21,8 +21,33 @@ local function debounced_refresh()
   end))
 end
 
+-- Inject our filetype into lualine's disabled_filetypes so lualine
+-- skips rendering its statusline for the sidebar window.
+-- lualine.config.get_config() returns the live internal table by reference,
+-- so a table.insert here is picked up immediately without re-calling setup().
+local function register_lualine_compat()
+  local ok, lc = pcall(require, "lualine.config")
+  if not ok then return end
+  local cfg = lc.get_config()
+  if not (cfg and cfg.options and cfg.options.disabled_filetypes) then return end
+  local df = cfg.options.disabled_filetypes
+  df.statusline = df.statusline or {}
+  for _, ft in ipairs(df.statusline) do
+    if ft == "nvim-buffergator" then return end  -- already registered
+  end
+  table.insert(df.statusline, "nvim-buffergator")
+end
+
 function M.setup(user_opts)
   config.setup(user_opts)
+
+  -- Register now if lualine is already loaded; also on VimEnter in case it
+  -- loads lazily after us.
+  register_lualine_compat()
+  vim.api.nvim_create_autocmd("VimEnter", {
+    once     = true,
+    callback = register_lualine_compat,
+  })
 
   -- Global keymaps
   local gk = config.options.global_keymaps

@@ -3,6 +3,38 @@ local M = {}
 local config   = require("nvim-buffergator.config")
 local renderer = require("nvim-buffergator.renderer")
 
+local sel_ns = vim.api.nvim_create_namespace("nvim-buffergator-sel")
+
+-- Reversed fg/bg gives guaranteed contrast in any colorscheme.
+-- Define once; ColorScheme autocmd keeps it in sync after theme changes.
+local function def_sel_hl()
+  local visual = vim.api.nvim_get_hl(0, { name = "Visual", link = false })
+  local normal = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+  vim.api.nvim_set_hl(0, "NvimBuffergatorSel", {
+    bg   = visual.bg,
+    fg   = normal.fg,
+    bold = true,
+  })
+end
+def_sel_hl()
+vim.api.nvim_create_autocmd("ColorScheme", { callback = def_sel_hl })
+
+-- Highlight [NNN] on the cursor line so the selected entry is obvious.
+-- Uses a separate namespace so it doesn't interfere with render highlights.
+local function update_sel_hl(bufnr)
+  vim.api.nvim_buf_clear_namespace(bufnr, sel_ns, 0, -1)
+  local row = vim.api.nvim_win_get_cursor(0)[1] - 1  -- 0-indexed
+  if row >= renderer.HEADER_LINES then
+    -- Use set_extmark with explicit priority so this wins over the render's
+    -- Comment highlight that covers the same [NNN] columns (0-4).
+    vim.api.nvim_buf_set_extmark(bufnr, sel_ns, row, 0, {
+      end_col  = 5,
+      hl_group = "NvimBuffergatorSel",
+      priority = 200,
+    })
+  end
+end
+
 local state = {
   win      = nil,
   bufnr    = nil,
@@ -19,6 +51,24 @@ local function get_or_create_buf()
   vim.bo[bufnr].swapfile   = false
   vim.bo[bufnr].filetype   = "nvim-buffergator"
   vim.bo[bufnr].modifiable = false
+  -- Suppress matchparen: clearing matchpairs means there are no pairs to match
+  vim.bo[bufnr].matchpairs = ""
+  -- Update [NNN] selection highlight whenever the cursor moves
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer   = bufnr,
+    callback = function() update_sel_hl(bufnr) end,
+  })
+  -- Blank the statusline whenever any plugin (lualine etc.) changes it for
+  -- this buffer's window. OptionSet fires synchronously on the option write,
+  -- so we always win regardless of scheduling. v:option_new guard stops the loop.
+  vim.api.nvim_create_autocmd("OptionSet", {
+    pattern  = "statusline",
+    callback = function()
+      if vim.api.nvim_get_current_buf() == bufnr and vim.v.option_new ~= " " then
+        vim.opt_local.statusline = " "
+      end
+    end,
+  })
   state.bufnr = bufnr
   return bufnr
 end
@@ -85,6 +135,7 @@ function M.open()
   wo.winfixwidth    = true
   wo.cursorline     = true
   wo.spell          = false
+  wo.statusline     = " "
 
   if not vim.b[bufnr]._buffergator_keymaps_set then
     require("nvim-buffergator.keymaps").setup(bufnr)
@@ -109,6 +160,8 @@ function M.open()
   if target <= line_count then
     vim.api.nvim_win_set_cursor(win, { target, 0 })
   end
+  -- nvim_win_set_cursor doesn't fire CursorMoved, so paint the initial highlight
+  update_sel_hl(bufnr)
 
   -- Focus stays in the sidebar so the user can navigate immediately
 end
