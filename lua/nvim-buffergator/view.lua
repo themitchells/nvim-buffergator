@@ -167,7 +167,11 @@ function M.open()
   -- nvim_win_set_cursor doesn't fire CursorMoved, so paint the initial highlight
   update_sel_hl(bufnr)
 
-  -- Focus stays in the sidebar so the user can navigate immediately
+  -- Kick off async git refresh. When it completes, re-render to add git
+  -- status/branch data. The sidebar is already usable before this arrives.
+  require("nvim-buffergator.catalog").refresh_git_async(function()
+    if M.is_open() then M.refresh() end
+  end)
 end
 
 function M.close()

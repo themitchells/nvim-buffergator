@@ -3,21 +3,32 @@ local M = {}
 local config = require("nvim-buffergator.config")
 local view   = require("nvim-buffergator.view")
 
--- Debounce timer for autocommand-triggered refreshes
-local refresh_timer = nil
-local DEBOUNCE_MS   = 50
+-- Debounce timers
+local display_timer = nil
+local git_timer     = nil
+local DEBOUNCE_MS   = 80
 
-local function debounced_refresh()
-  if refresh_timer then
-    refresh_timer:stop()
-    refresh_timer:close()
-  end
-  refresh_timer = vim.uv.new_timer()
-  refresh_timer:start(DEBOUNCE_MS, 0, vim.schedule_wrap(function()
+-- Re-render from cache only (no git I/O) — used for BufEnter / cursor moves.
+local function debounced_display_refresh()
+  if display_timer then display_timer:stop(); display_timer:close() end
+  display_timer = vim.uv.new_timer()
+  display_timer:start(DEBOUNCE_MS, 0, vim.schedule_wrap(function()
+    if view.is_open() then view.refresh() end
+    display_timer = nil
+  end))
+end
+
+-- Async git refresh + re-render — used when files actually change.
+local function debounced_git_refresh()
+  if git_timer then git_timer:stop(); git_timer:close() end
+  git_timer = vim.uv.new_timer()
+  git_timer:start(DEBOUNCE_MS, 0, vim.schedule_wrap(function()
     if view.is_open() then
-      view.refresh()
+      require("nvim-buffergator.catalog").refresh_git_async(function()
+        if view.is_open() then view.refresh() end
+      end)
     end
-    refresh_timer = nil
+    git_timer = nil
   end))
 end
 
@@ -61,9 +72,15 @@ function M.setup(user_opts)
   -- Autocommands
   local grp = vim.api.nvim_create_augroup("NvimBuffergator", { clear = true })
 
-  vim.api.nvim_create_autocmd({ "BufAdd", "BufDelete", "BufWritePost", "BufEnter" }, {
+  -- File-change events: need a full git refresh
+  vim.api.nvim_create_autocmd({ "BufAdd", "BufDelete", "BufWritePost", "BufFilePost" }, {
     group    = grp,
-    callback = debounced_refresh,
+    callback = debounced_git_refresh,
+  })
+  -- Window/buffer focus events: re-render from cache (no git I/O)
+  vim.api.nvim_create_autocmd("BufEnter", {
+    group    = grp,
+    callback = debounced_display_refresh,
   })
 
   -- Track which editing window the user is in so <CR> always opens
