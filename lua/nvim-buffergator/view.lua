@@ -1,12 +1,31 @@
+--- nvim-buffergator view
+-- Manages the sidebar window and scratch buffer lifecycle.
+--
+-- State machine:
+--   closed  →  open()  →  open (sidebar focused)
+--   open    →  close() →  closed
+--   open    →  open()  →  open (refocused and refreshed)
+--   open    →  toggle()→  closed
+--   closed  →  toggle()→  open
+--
+-- The sidebar uses a nofile scratch buffer that is wiped when its window
+-- closes (bufhidden=wipe), so a fresh buffer is created on each open().
+-- All rendering goes through renderer.render(); this module only handles
+-- window creation, sizing, and cursor management.
+
 local M = {}
 
 local config   = require("nvim-buffergator.config")
 local renderer = require("nvim-buffergator.renderer")
 
+-- ── Highlight groups ──────────────────────────────────────────────────────────
+
 local sel_ns = vim.api.nvim_create_namespace("nvim-buffergator-sel")
 
--- Reversed fg/bg gives guaranteed contrast in any colorscheme.
--- Define once; ColorScheme autocmd keeps it in sync after theme changes.
+--- Define NvimBuffergatorSel: Visual background with Normal foreground + bold.
+-- This gives guaranteed contrast regardless of colorscheme — the fg is
+-- the theme's default readable text colour, and the bg is the selection
+-- colour the user is already familiar with from Visual mode.
 local function def_sel_hl()
   local visual = vim.api.nvim_get_hl(0, { name = "Visual", link = false })
   local normal = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
@@ -19,14 +38,17 @@ end
 def_sel_hl()
 vim.api.nvim_create_autocmd("ColorScheme", { callback = def_sel_hl })
 
--- Highlight [NNN] on the cursor line so the selected entry is obvious.
--- Uses a separate namespace so it doesn't interfere with render highlights.
+-- ── Selection highlight ───────────────────────────────────────────────────────
+
+--- Apply NvimBuffergatorSel to the [NNN] field on the cursor's current line.
+-- Uses a dedicated namespace (sel_ns) so it sits above the render highlights
+-- without interfering with them.  Priority 200 > default 100 ensures the
+-- selection colour wins over the Comment highlight on the same columns.
+-- @param bufnr integer  The sidebar buffer handle.
 local function update_sel_hl(bufnr)
   vim.api.nvim_buf_clear_namespace(bufnr, sel_ns, 0, -1)
   local row = vim.api.nvim_win_get_cursor(0)[1] - 1  -- 0-indexed
   if row >= renderer.HEADER_LINES then
-    -- Use set_extmark with explicit priority so this wins over the render's
-    -- Comment highlight that covers the same [NNN] columns (0-4).
     vim.api.nvim_buf_set_extmark(bufnr, sel_ns, row, 0, {
       end_col  = 5,
       hl_group = "NvimBuffergatorSel",
@@ -35,33 +57,43 @@ local function update_sel_hl(bufnr)
   end
 end
 
+-- ── Module state ──────────────────────────────────────────────────────────────
+
+--- Sidebar state.  win and bufnr are nil when the sidebar is closed.
+-- prev_win is the last user-focused editing window, updated by the
+-- WinEnter autocmd in init.lua; used by keymaps to know where to open buffers.
 local state = {
-  win      = nil,
-  bufnr    = nil,
-  prev_win = nil,
+  win      = nil,  -- sidebar window handle
+  bufnr    = nil,  -- sidebar scratch buffer handle
+  prev_win = nil,  -- last non-sidebar window the user was in
 }
 
-local function get_or_create_buf()
-  if state.bufnr and vim.api.nvim_buf_is_valid(state.bufnr) then
-    return state.bufnr
-  end
+-- ── Buffer creation ───────────────────────────────────────────────────────────
+
+--- Create the sidebar scratch buffer and attach its buffer-local autocmds.
+-- Called once per open() since the buffer is wiped on close (bufhidden=wipe).
+-- @return integer  The new buffer handle.
+local function create_buf()
   local bufnr = vim.api.nvim_create_buf(false, true)
   vim.bo[bufnr].buftype    = "nofile"
   vim.bo[bufnr].bufhidden  = "wipe"
   vim.bo[bufnr].swapfile   = false
   vim.bo[bufnr].filetype   = "nvim-buffergator"
   vim.bo[bufnr].modifiable = false
-  -- Suppress matchparen: clearing matchpairs means there are no pairs to match
+  -- Suppress matchparen: with no matchpairs defined, there are no pairs
+  -- to highlight, so the [NNN] brackets are never highlighted.
   vim.bo[bufnr].matchpairs = ""
-  -- Update [NNN] selection highlight whenever the cursor moves
+
+  -- Update the [NNN] selection indicator whenever the cursor moves.
   vim.api.nvim_create_autocmd("CursorMoved", {
     buffer   = bufnr,
     callback = function() update_sel_hl(bufnr) end,
   })
-  -- Blank the statusline whenever any plugin (lualine etc.) changes it for
-  -- this buffer's window. OptionSet fires synchronously on the option write,
-  -- so we always win regardless of scheduling. v:option_new guard stops the loop.
-  -- Blank statusline and winbar whenever any plugin tries to set them
+
+  -- Keep statusline and winbar blank even if lualine or another plugin
+  -- tries to set them.  OptionSet fires synchronously on each write to
+  -- the option, so this always wins regardless of plugin scheduling order.
+  -- The v:option_new guard prevents the re-entrant loop.
   for _, opt in ipairs({ "statusline", "winbar" }) do
     vim.api.nvim_create_autocmd("OptionSet", {
       pattern  = opt,
@@ -72,21 +104,34 @@ local function get_or_create_buf()
       end,
     })
   end
+
   state.bufnr = bufnr
   return bufnr
 end
 
+-- ── Public API ────────────────────────────────────────────────────────────────
+
+--- Return true if the sidebar window is currently open and valid.
 function M.is_open()
   return state.win ~= nil and vim.api.nvim_win_is_valid(state.win)
 end
 
+--- Return the sidebar window handle, or nil if closed.
 function M.get_win()   return state.win   end
+
+--- Return the sidebar buffer handle, or nil if it has been wiped.
 function M.get_bufnr() return state.bufnr end
 
+--- Update the remembered previous window (called from WinEnter autocmd).
+-- @param win integer  The window that just gained focus.
 function M.set_prev_win(win)
   state.prev_win = win
 end
 
+--- Return the most recent non-sidebar window, used by keymaps to decide
+-- where to open a buffer.  Falls back to any non-sidebar window if
+-- prev_win is no longer valid.
+-- @return integer|nil
 function M.get_prev_win()
   if state.prev_win and vim.api.nvim_win_is_valid(state.prev_win) then
     return state.prev_win
@@ -97,6 +142,9 @@ function M.get_prev_win()
   return nil
 end
 
+--- Resize the sidebar window to max_width, clamped to [min_width, max_width].
+-- @param win       integer
+-- @param max_width integer  Preferred width returned by renderer.render().
 local function apply_resize(win, max_width)
   if config.options.auto_resize then
     local opts  = config.options
@@ -105,59 +153,63 @@ local function apply_resize(win, max_width)
   end
 end
 
+--- Re-render the sidebar from the current cache (no git I/O) and resize.
+-- Safe to call when the sidebar is closed (returns immediately).
 function M.refresh()
   if not M.is_open() then return end
-  -- When triggered while inside the sidebar (e.g. BufEnter on the nofile
-  -- buffer itself), fall back to prev_win so current/alternate resolve correctly.
+  -- If the current window is the sidebar itself (e.g. triggered by BufEnter
+  -- on the nofile buffer), resolve current/alternate flags from prev_win.
   local context_win = vim.api.nvim_get_current_win()
   if context_win == state.win then context_win = state.prev_win end
   local max_width = renderer.render(state.bufnr, context_win)
   apply_resize(state.win, max_width)
 end
 
+--- Open the sidebar.
+-- If already open, refocuses it and refreshes the content.
+-- If closed, creates the window on the left, renders immediately from the
+-- current git cache, then fires an async git refresh in the background.
 function M.open()
   if M.is_open() then
-    -- Already open: just focus it and refresh
     vim.api.nvim_set_current_win(state.win)
     M.refresh()
     return
   end
 
-  -- Record the window we're leaving so keymaps can navigate back to it
+  -- Record the window we're leaving so keymaps know where to open buffers.
   state.prev_win = vim.api.nvim_get_current_win()
 
-  local bufnr = get_or_create_buf()
+  local bufnr = create_buf()
 
   vim.cmd("topleft " .. config.options.width .. "vsplit")
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(win, bufnr)
   state.win = win
 
+  -- Window-local display options for the sidebar.
   local wo = vim.wo[win]
   wo.number         = false
   wo.relativenumber = false
   wo.signcolumn     = "no"
   wo.foldcolumn     = "0"
   wo.wrap           = false
-  wo.winfixwidth    = true
+  wo.winfixwidth    = true  -- prevents other windows from stealing this width
   wo.cursorline     = true
   wo.spell          = false
-  wo.statusline     = " "
+  wo.statusline     = " "   -- blank (OptionSet autocmd keeps it this way)
   wo.winbar         = " "
 
-  if not vim.b[bufnr]._buffergator_keymaps_set then
-    require("nvim-buffergator.keymaps").setup(bufnr)
-    vim.b[bufnr]._buffergator_keymaps_set = true
-  end
+  -- Attach buffer-local keymaps.
+  require("nvim-buffergator.keymaps").setup(bufnr)
 
-  -- Render with correct context so current/alternate flags resolve against
-  -- the window the user was in (not the sidebar nofile buffer).
+  -- Render immediately from cache so the sidebar is usable at once, even
+  -- before git data arrives.
   local max_width, entries = renderer.render(bufnr, state.prev_win)
   apply_resize(win, max_width)
 
-  -- Position cursor on the active buffer's entry (fall back to first entry)
+  -- Position cursor on the currently active buffer's entry.
   local prev_buf = vim.api.nvim_win_get_buf(state.prev_win)
-  local target   = renderer.HEADER_LINES + 1
+  local target   = renderer.HEADER_LINES + 1  -- default: first entry
   for i, e in ipairs(entries) do
     if e.bufnr == prev_buf then
       target = renderer.HEADER_LINES + i
@@ -168,25 +220,30 @@ function M.open()
   if target <= line_count then
     vim.api.nvim_win_set_cursor(win, { target, 0 })
   end
-  -- nvim_win_set_cursor doesn't fire CursorMoved, so paint the initial highlight
+  -- nvim_win_set_cursor does not fire CursorMoved, so paint the initial
+  -- selection highlight manually.
   update_sel_hl(bufnr)
 
-  -- Kick off async git refresh. When it completes, re-render to add git
-  -- status/branch data. The sidebar is already usable before this arrives.
+  -- Async git refresh: runs in the background and re-renders when done,
+  -- adding branch name and per-file status without blocking the open.
   require("nvim-buffergator.catalog").refresh_git_async(function()
     if M.is_open() then M.refresh() end
   end)
 end
 
+--- Close the sidebar if it is open.
 function M.close()
   if not M.is_open() then return end
   local win = state.win
   state.win = nil
+  -- state.bufnr is intentionally not cleared: the buffer will be auto-wiped
+  -- by bufhidden=wipe when its last window closes.
   if vim.api.nvim_win_is_valid(win) then
     vim.api.nvim_win_close(win, true)
   end
 end
 
+--- Toggle the sidebar open/closed.
 function M.toggle()
   if M.is_open() then M.close() else M.open() end
 end

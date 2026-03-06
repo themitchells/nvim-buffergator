@@ -1,14 +1,30 @@
+--- nvim-buffergator public API and autocommand setup
+-- This is the module users interact with directly:
+--   require("nvim-buffergator").setup(opts)
+--   require("nvim-buffergator").open()
+--   require("nvim-buffergator").close()
+--   require("nvim-buffergator").toggle()
+--   require("nvim-buffergator").is_open()
+--
+-- setup() wires together:
+--   • Global keymaps (<Leader>b / <Leader>B)
+--   • Autocommands for refresh (BufEnter, BufAdd, …)
+--   • lualine compatibility (disabled_filetypes injection)
+
 local M = {}
 
 local config = require("nvim-buffergator.config")
 local view   = require("nvim-buffergator.view")
 
--- Debounce timers
-local display_timer = nil
-local git_timer     = nil
+-- ── Debounced refresh timers ──────────────────────────────────────────────────
+
+local display_timer = nil  -- re-render from cache (no git I/O)
+local git_timer     = nil  -- async git refresh + re-render
 local DEBOUNCE_MS   = 80
 
--- Re-render from cache only (no git I/O) — used for BufEnter / cursor moves.
+--- Re-render the sidebar from cache.
+-- Used for BufEnter — the buffer list may have changed focus but git
+-- status has not changed, so no git I/O is needed.
 local function debounced_display_refresh()
   if display_timer then display_timer:stop(); display_timer:close() end
   display_timer = vim.uv.new_timer()
@@ -18,7 +34,9 @@ local function debounced_display_refresh()
   end))
 end
 
--- Async git refresh + re-render — used when files actually change.
+--- Trigger an async git refresh followed by a re-render.
+-- Used for BufAdd / BufDelete / BufWritePost / BufFilePost — events where
+-- the git status or buffer list may have genuinely changed on disk.
 local function debounced_git_refresh()
   if git_timer then git_timer:stop(); git_timer:close() end
   git_timer = vim.uv.new_timer()
@@ -32,10 +50,12 @@ local function debounced_git_refresh()
   end))
 end
 
--- Inject our filetype into lualine's disabled_filetypes so lualine
--- skips rendering its statusline for the sidebar window.
+-- ── lualine compatibility ─────────────────────────────────────────────────────
+
+--- Inject "nvim-buffergator" into lualine's disabled_filetypes.statusline.
 -- lualine.config.get_config() returns the live internal table by reference,
--- so a table.insert here is picked up immediately without re-calling setup().
+-- so mutating it here takes effect immediately without re-calling lualine.setup().
+-- Called at setup() time and again at VimEnter in case lualine loads lazily.
 local function register_lualine_compat()
   local ok, lc = pcall(require, "lualine.config")
   if not ok then return end
@@ -44,16 +64,20 @@ local function register_lualine_compat()
   local df = cfg.options.disabled_filetypes
   df.statusline = df.statusline or {}
   for _, ft in ipairs(df.statusline) do
-    if ft == "nvim-buffergator" then return end  -- already registered
+    if ft == "nvim-buffergator" then return end  -- already present
   end
   table.insert(df.statusline, "nvim-buffergator")
 end
 
+-- ── Public setup ──────────────────────────────────────────────────────────────
+
+--- Initialise the plugin.  Must be called before any other function.
+-- @param user_opts table|nil  Partial config table; see config.lua for options.
 function M.setup(user_opts)
   config.setup(user_opts)
 
-  -- Register now if lualine is already loaded; also on VimEnter in case it
-  -- loads lazily after us.
+  -- lualine compat: try now (if lualine is already loaded) and at VimEnter
+  -- as a safety net for lazy-loaded lualine.
   register_lualine_compat()
   vim.api.nvim_create_autocmd("VimEnter", {
     once     = true,
@@ -63,21 +87,23 @@ function M.setup(user_opts)
   -- Global keymaps
   local gk = config.options.global_keymaps
   if gk.toggle then
-    vim.keymap.set("n", gk.toggle, view.toggle, { noremap = true, silent = true, desc = "Toggle buffergator" })
+    vim.keymap.set("n", gk.toggle, view.toggle,
+      { noremap = true, silent = true, desc = "Toggle nvim-buffergator" })
   end
   if gk.close then
-    vim.keymap.set("n", gk.close, view.close, { noremap = true, silent = true, desc = "Close buffergator" })
+    vim.keymap.set("n", gk.close, view.close,
+      { noremap = true, silent = true, desc = "Close nvim-buffergator" })
   end
 
-  -- Autocommands
   local grp = vim.api.nvim_create_augroup("NvimBuffergator", { clear = true })
 
-  -- File-change events: need a full git refresh
+  -- File-change events: git status may have changed, so run a full refresh.
   vim.api.nvim_create_autocmd({ "BufAdd", "BufDelete", "BufWritePost", "BufFilePost" }, {
     group    = grp,
     callback = debounced_git_refresh,
   })
-  -- Window/buffer focus: record MRU timestamp + re-render from cache
+
+  -- BufEnter: record MRU timestamp and re-render from cache.
   vim.api.nvim_create_autocmd("BufEnter", {
     group    = grp,
     callback = function()
@@ -87,35 +113,31 @@ function M.setup(user_opts)
     end,
   })
 
-  -- Track which editing window the user is in so <CR> always opens
-  -- in the window they most recently focused, not the one from sidebar open.
+  -- WinEnter: update prev_win so <CR> always targets the last focused editing
+  -- window; also close the sidebar if it becomes the last window.
   vim.api.nvim_create_autocmd("WinEnter", {
     group    = grp,
     callback = function()
       local win = vim.api.nvim_get_current_win()
-      if view.is_open() and win ~= view.get_win() then
-        view.set_prev_win(win)
-      end
-    end,
-  })
-
-  -- Close sidebar if it becomes the last window
-  vim.api.nvim_create_autocmd("WinEnter", {
-    group    = grp,
-    callback = function()
-      if view.is_open() and #vim.api.nvim_list_wins() == 1 then
-        -- Only the sidebar is open; close it to avoid being stranded
-        view.close()
-        vim.cmd("enew")
+      if view.is_open() then
+        if win ~= view.get_win() then
+          -- User focused an editing window; remember it for keymap use.
+          view.set_prev_win(win)
+        elseif #vim.api.nvim_list_wins() == 1 then
+          -- Sidebar is the only window left; close it to avoid being stranded.
+          view.close()
+          vim.cmd("enew")
+        end
       end
     end,
   })
 end
 
--- Public API
-M.open   = view.open
-M.close  = view.close
-M.toggle = view.toggle
+-- ── Public API ────────────────────────────────────────────────────────────────
+
+M.open    = view.open
+M.close   = view.close
+M.toggle  = view.toggle
 M.is_open = view.is_open
 
 return M
