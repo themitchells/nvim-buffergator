@@ -42,6 +42,15 @@ local git_hl = {
   ["?"] = "Comment",      -- untracked
 }
 
+--- Scale each RGB channel of an integer colour by factor (0.0–1.0).
+local function darken(color_int, factor)
+  if not color_int then return color_int end
+  local r = math.floor(math.floor(color_int / 0x10000)           * factor)
+  local g = math.floor(math.floor(color_int % 0x10000 / 0x100)   * factor)
+  local b = math.floor(             color_int % 0x100             * factor)
+  return r * 0x10000 + g * 0x100 + b
+end
+
 --- Define (or re-define) the three filename dirty-state highlight groups.
 -- Called once at module load and again on ColorScheme so themes don't break.
 local function def_name_hls()
@@ -60,6 +69,13 @@ local function def_name_hls()
   -- Both dirty: red + bold + underline — visually distinct from yellow
   -- even on themes where DiagnosticError and DiagnosticWarn look similar
   vim.api.nvim_set_hl(0, "NvimBuffergatorBothDirty", { fg = err.fg, bold = true, underline = true })
+  -- Clean filename: use LualineFilenameNormalBold fg (bright/white in most themes)
+  -- so the filename stands out against the dimmed Comment path prefix.
+  -- Falls back to Normal fg + bold if lualine group is absent.
+  local lualine_norm = vim.api.nvim_get_hl(0, { name = "LualineFilenameNormalBold", link = false })
+  local normal       = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+  local clean_fg     = (lualine_norm and lualine_norm.fg) and lualine_norm.fg or normal.fg
+  vim.api.nvim_set_hl(0, "NvimBuffergatorFilename", { fg = darken(clean_fg, 0.75), bold = true })
 end
 def_name_hls()
 -- Re-run after every ColorScheme event, but deferred via vim.schedule so
@@ -132,7 +148,7 @@ local function build_line(entry, max_display)
   elseif git_dirty then
     name_hl = "NvimBuffergatorGitDirty"
   else
-    name_hl = "Bold"
+    name_hl = "NvimBuffergatorFilename"
   end
 
   -- For path > 0, dim the directory prefix and colour only the basename tail.
