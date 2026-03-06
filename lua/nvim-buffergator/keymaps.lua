@@ -118,6 +118,65 @@ function M.setup(bufnr)
   end, "Previous buffer")
 
   map(bufnr, km.refresh, function() view.refresh() end, "Refresh list")
+
+  -- Cycle through sort modes
+  map(bufnr, km.cycle_sort, function()
+    local catalog    = require("nvim-buffergator.catalog")
+    local modes      = catalog.sort_modes
+    local current    = config.options.sort
+    local idx        = 1
+    for i, s in ipairs(modes) do
+      if s == current then idx = i; break end
+    end
+    config.options.sort = modes[(idx % #modes) + 1]
+    view.refresh()
+    vim.notify("nvim-buffergator sort: " .. config.options.sort, vim.log.levels.INFO)
+  end, "Cycle sort mode")
+
+  -- Floating help window
+  map(bufnr, km.help, function()
+    local lines = {
+      "  nvim-buffergator keymaps       ",
+      "  ─────────────────────────────  ",
+      "  <CR> / o    Open buffer        ",
+      "  s / <C-v>   Open in vsplit     ",
+      "  i / <C-s>   Open in split      ",
+      "  t / <C-t>   Open in tab        ",
+      "  d           Delete buffer      ",
+      "  D           Wipe buffer        ",
+      "  q / <Esc>   Close sidebar      ",
+      "  <C-n>       Next entry         ",
+      "  <C-p>       Previous entry     ",
+      "  S           Cycle sort mode    ",
+      "  R           Refresh            ",
+      "  g?          This help          ",
+    }
+    local width  = 36
+    local height = #lines
+    local row    = math.floor((vim.o.lines   - height) / 2)
+    local col    = math.floor((vim.o.columns - width)  / 2)
+    local hbuf   = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(hbuf, 0, -1, false, lines)
+    vim.bo[hbuf].modifiable = false
+    local hwin = vim.api.nvim_open_win(hbuf, false, {
+      relative = "editor",
+      row      = row,
+      col      = col,
+      width    = width,
+      height   = height,
+      style    = "minimal",
+      border   = "rounded",
+    })
+    vim.api.nvim_create_autocmd({ "CursorMoved", "BufLeave" }, {
+      buffer   = bufnr,
+      once     = true,
+      callback = function()
+        if vim.api.nvim_win_is_valid(hwin) then
+          vim.api.nvim_win_close(hwin, true)
+        end
+      end,
+    })
+  end, "Show help")
 end
 
 return M

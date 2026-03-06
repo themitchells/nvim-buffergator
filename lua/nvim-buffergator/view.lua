@@ -61,14 +61,17 @@ local function get_or_create_buf()
   -- Blank the statusline whenever any plugin (lualine etc.) changes it for
   -- this buffer's window. OptionSet fires synchronously on the option write,
   -- so we always win regardless of scheduling. v:option_new guard stops the loop.
-  vim.api.nvim_create_autocmd("OptionSet", {
-    pattern  = "statusline",
-    callback = function()
-      if vim.api.nvim_get_current_buf() == bufnr and vim.v.option_new ~= " " then
-        vim.opt_local.statusline = " "
-      end
-    end,
-  })
+  -- Blank statusline and winbar whenever any plugin tries to set them
+  for _, opt in ipairs({ "statusline", "winbar" }) do
+    vim.api.nvim_create_autocmd("OptionSet", {
+      pattern  = opt,
+      callback = function()
+        if vim.api.nvim_get_current_buf() == bufnr and vim.v.option_new ~= " " then
+          vim.opt_local[opt] = " "
+        end
+      end,
+    })
+  end
   state.bufnr = bufnr
   return bufnr
 end
@@ -140,6 +143,7 @@ function M.open()
   wo.cursorline     = true
   wo.spell          = false
   wo.statusline     = " "
+  wo.winbar         = " "
 
   if not vim.b[bufnr]._buffergator_keymaps_set then
     require("nvim-buffergator.keymaps").setup(bufnr)

@@ -77,10 +77,14 @@ function M.setup(user_opts)
     group    = grp,
     callback = debounced_git_refresh,
   })
-  -- Window/buffer focus events: re-render from cache (no git I/O)
+  -- Window/buffer focus: record MRU timestamp + re-render from cache
   vim.api.nvim_create_autocmd("BufEnter", {
     group    = grp,
-    callback = debounced_display_refresh,
+    callback = function()
+      local bufnr = vim.api.nvim_get_current_buf()
+      require("nvim-buffergator.catalog").record_mru(bufnr)
+      debounced_display_refresh()
+    end,
   })
 
   -- Track which editing window the user is in so <CR> always opens

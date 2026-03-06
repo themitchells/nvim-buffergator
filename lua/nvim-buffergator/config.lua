@@ -24,6 +24,8 @@ M.defaults = {
     next = "<C-n>",
     prev = "<C-p>",
     refresh = "R",
+    cycle_sort = "S",
+    help = "g?",
     mouse_open = "<2-LeftMouse>",  -- false to disable mouse
   },
   global_keymaps = {

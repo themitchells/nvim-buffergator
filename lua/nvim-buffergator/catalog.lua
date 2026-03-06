@@ -184,6 +184,14 @@ function M.refresh_git_async(on_done)
   end
 end
 
+-- ── MRU tracking ─────────────────────────────────────────────────────────────
+
+local mru_times = {}  -- bufnr → vim.uv.hrtime() of last BufEnter
+
+function M.record_mru(bufnr)
+  mru_times[bufnr] = vim.uv.hrtime()
+end
+
 -- ── Buffer list (no git I/O — reads from git_cache) ──────────────────────────
 
 local function make_entry(bufnr, current, alternate)
@@ -231,7 +239,16 @@ local sorters = {
     if a.basename ~= b.basename then return a.basename < b.basename end
     return a.name < b.name
   end,
+  mru = function(a, b)
+    local ta = mru_times[a.bufnr] or 0
+    local tb = mru_times[b.bufnr] or 0
+    if ta ~= tb then return ta > tb end  -- most recent first
+    return a.name < b.name              -- alphabetical tiebreaker
+  end,
 }
+
+-- Ordered list used by cycle_sort keymap
+M.sort_modes = { "filepath", "bufnum", "basename", "mru" }
 
 function M.get_buffers(context_win)
   local current, alternate
