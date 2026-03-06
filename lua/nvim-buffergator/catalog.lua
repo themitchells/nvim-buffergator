@@ -70,31 +70,50 @@ end
 local function make_entry(bufnr, current, alternate, git_st)
   local name     = vim.api.nvim_buf_get_name(bufnr)
   local basename = name ~= "" and vim.fn.fnamemodify(name, ":t") or "[No Name]"
-  local parent   = name ~= "" and vim.fn.fnamemodify(name, ":h:~:.") or ""
-  if parent == "." then parent = "" end
+
+  local display_name, parent
+  local path_opt = config.options.path or 0
+
+  if name == "" then
+    display_name = "[No Name]"
+    parent       = ""
+  elseif path_opt == 1 then
+    display_name = vim.fn.fnamemodify(name, ":~:.")  -- relative to ~ then cwd
+    parent       = ""
+  elseif path_opt == 2 then
+    display_name = name                              -- absolute
+    parent       = ""
+  elseif path_opt == 3 then
+    display_name = vim.fn.fnamemodify(name, ":~")   -- tilde-relative
+    parent       = ""
+  else  -- path_opt == 0 (default)
+    display_name = basename
+    parent       = vim.fn.fnamemodify(name, ":h:~:.")
+    if parent == "." then parent = "" end
+  end
 
   return {
-    bufnr      = bufnr,
-    name       = name,
-    basename   = basename,
-    parent     = parent,
-    modified   = vim.bo[bufnr].modified,
-    current    = (bufnr == current),
-    alternate  = (bufnr == alternate),
-    git_status = (name ~= "" and git_st[name]) or " ",
+    bufnr        = bufnr,
+    name         = name,
+    basename     = basename,
+    display_name = display_name,
+    parent       = parent,
+    modified     = vim.bo[bufnr].modified,
+    current      = (bufnr == current),
+    alternate    = (bufnr == alternate),
+    git_status   = (name ~= "" and git_st[name]) or " ",
   }
 end
 
 local sorters = {
-  filepath = function(a, b)
-    local pa = a.parent .. "/" .. a.basename
-    local pb = b.parent .. "/" .. b.basename
-    return pa < pb
-  end,
+  -- Sort by full absolute path so the result is consistent across all
+  -- path display modes (parent is "" when path > 0, so using it for
+  -- sort would break ordering).
+  filepath = function(a, b) return a.name < b.name end,
   bufnum   = function(a, b) return a.bufnr < b.bufnr end,
   basename = function(a, b)
     if a.basename ~= b.basename then return a.basename < b.basename end
-    return a.parent < b.parent
+    return a.name < b.name  -- full path as tiebreaker for same filename
   end,
 }
 

@@ -7,6 +7,12 @@ M.defaults = {
   sort = "filepath",    -- "filepath" | "bufnum" | "basename" | "mru"
   auto_resize = true,
   close_on_select = true,  -- close sidebar after opening a buffer
+  -- Filename path display (mirrors lualine path option):
+  --   0 = filename only  (parent shown off-screen to the right)
+  --   1 = relative path  (no separate parent column)
+  --   2 = absolute path  (no separate parent column)
+  --   3 = tilde-relative (no separate parent column)
+  path = 0,
   keymaps = {
     open = { "<CR>", "o" },
     open_vsplit = { "s", "<C-v>" },
