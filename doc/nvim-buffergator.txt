@@ -1,0 +1,182 @@
+*nvim-buffergator.txt*   Buffer list sidebar for Neovim
+
+Author:  local plugin
+License: MIT
+
+================================================================================
+CONTENTS                                          *nvim-buffergator-contents*
+
+  1. Introduction ............ |nvim-buffergator-intro|
+  2. Setup ................... |nvim-buffergator-setup|
+  3. Commands ................ |nvim-buffergator-commands|
+  4. Default Keymaps ......... |nvim-buffergator-keymaps|
+  5. Configuration ........... |nvim-buffergator-config|
+  6. Highlights .............. |nvim-buffergator-highlights|
+  7. Line Format ............. |nvim-buffergator-format|
+
+================================================================================
+1. INTRODUCTION                                   *nvim-buffergator-intro*
+
+nvim-buffergator is a sidebar buffer list for Neovim, written in Lua.
+
+Features:
+  • Left-side vertical split sidebar, auto-sized to fit filenames
+  • Four sort modes: filepath, bufnum, basename, MRU
+  • Four filename display modes (path=0-3, mirrors lualine)
+  • Per-file git status flags and filename colouring
+  • Git branch shown in the header
+  • Asynchronous git operations — sidebar opens instantly
+  • Configurable close-on-select, mouse support, and keymaps
+  • lualine statusline / winbar suppression built-in
+
+================================================================================
+2. SETUP                                          *nvim-buffergator-setup*
+
+Call setup() from your plugin config (lazy.nvim example): >lua
+
+    {
+        dir    = vim.fn.expand("~/path/to/nvim-buffergator"),
+        name   = "nvim-buffergator",
+        config = function()
+            require("nvim-buffergator").setup({
+                sort            = "filepath",
+                path            = 1,
+                close_on_select = true,
+            })
+        end,
+    }
+<
+
+================================================================================
+3. COMMANDS                                       *nvim-buffergator-commands*
+
+:BuffergatorOpen                  Open the sidebar.
+:BuffergatorClose                 Close the sidebar.
+:BuffergatorToggle                Toggle the sidebar.
+
+:BuffergatorPath {n}              Set filename display mode (0-3) at runtime.
+                                  See |nvim-buffergator-config| for values.
+
+:BuffergatorSort {mode}           Set sort mode at runtime.
+                                  Tab-completion lists valid modes.
+                                  Values: filepath, bufnum, basename, mru
+
+================================================================================
+4. DEFAULT KEYMAPS                                *nvim-buffergator-keymaps*
+
+Global (normal mode, set during setup):~
+  <Leader>b     Toggle sidebar
+  <Leader>B     Close sidebar
+
+Sidebar (buffer-local, active while the sidebar has focus):~
+  <CR> / o          Open buffer in last focused window
+  s / <C-v>         Open buffer in vertical split
+  i / <C-s>         Open buffer in horizontal split
+  t / <C-t>         Open buffer in new tab
+  <2-LeftMouse>     Double-click to open buffer
+  d                 Delete buffer (:bdelete)
+  D                 Wipe buffer (:bwipeout)
+  q / <Esc>         Close sidebar
+  <C-n>             Move cursor to next entry
+  <C-p>             Move cursor to previous entry
+  S                 Cycle sort mode (filepath→bufnum→basename→mru)
+  R                 Refresh buffer list
+  g?                Show keymap reference (floating window)
+
+All keys are configurable; set any key to false to disable it.
+
+================================================================================
+5. CONFIGURATION                                  *nvim-buffergator-config*
+
+Pass a partial table to setup(); unset keys use the defaults shown below. >lua
+
+    require("nvim-buffergator").setup({
+        -- Initial sidebar width in columns (auto_resize adjusts after render)
+        width = 30,
+
+        -- Auto-resize clamps between min_width and max_width
+        min_width  = 20,
+        max_width  = 60,
+        auto_resize = true,
+
+        -- Sort mode: "filepath" | "bufnum" | "basename" | "mru"
+        sort = "filepath",
+
+        -- Close sidebar after opening a buffer (true/false)
+        close_on_select = true,
+
+        -- Filename display mode (mirrors lualine path option):
+        --   0  filename only (parent shown off-screen to right)
+        --   1  relative path
+        --   2  absolute path
+        --   3  tilde-relative path
+        path = 0,
+
+        keymaps = {
+            open        = { "<CR>", "o" },
+            open_vsplit = { "s", "<C-v>" },
+            open_split  = { "i", "<C-s>" },
+            open_tab    = { "t", "<C-t>" },
+            delete      = "d",
+            wipe        = "D",
+            close       = { "q", "<Esc>" },
+            next        = "<C-n>",
+            prev        = "<C-p>",
+            refresh     = "R",
+            cycle_sort  = "S",
+            help        = "g?",
+            mouse_open  = "<2-LeftMouse>",  -- false to disable
+        },
+
+        global_keymaps = {
+            toggle = "<Leader>b",
+            close  = "<Leader>B",
+        },
+    })
+<
+
+================================================================================
+6. HIGHLIGHTS                                     *nvim-buffergator-highlights*
+
+The following highlight groups are defined at startup and updated on
+ColorScheme so they remain consistent when switching themes.  Override
+any of them after calling setup() to customise colours.
+
+NvimBuffergatorSel~
+  Applied to the [NNN] field on the cursor line.
+  Default: Visual background + Normal foreground + bold.
+
+NvimBuffergatorBufDirty~
+  Filename colour when the buffer has unsaved changes.
+  Default: DiagnosticWarn foreground + bold (yellow).
+
+NvimBuffergatorGitDirty~
+  Filename colour when the file has a git working-tree change but the
+  buffer is clean.
+  Default: DiagnosticInfo foreground (cyan).
+
+NvimBuffergatorBothDirty~
+  Filename colour when both the buffer is unsaved and the file has a git
+  change.  Deliberately uses a different style to the above two.
+  Default: DiagnosticError foreground + bold + underline (red).
+
+================================================================================
+7. LINE FORMAT                                    *nvim-buffergator-format*
+
+Each buffer entry is rendered as: >
+
+    [NNN] CMG  display_name   parent/dir
+<
+  [NNN]          Right-aligned buffer number.
+  C              Current (>) / alternate (#) / none (space).
+  M              Buffer-modified flag (+ or space).
+  G              Git working-tree status (M A D R ? or space).
+  display_name   Depends on the path= option:
+                   0  filename only (basename)
+                   1  relative path (lua/plugins/init.lua)
+                   2  absolute path (/home/user/…/init.lua)
+                   3  tilde-relative (~/.config/nvim/…/init.lua)
+  parent/dir     Path=0 only: parent directory, shown off-screen to the
+                 right at default width; visible when sidebar is widened.
+
+vim:ft=help:tw=78:
