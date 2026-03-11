@@ -131,6 +131,12 @@ function M.setup(bufnr)
     end, { buffer = bufnr, noremap = true, silent = true, desc = "Mouse: open buffer" })
   end
 
+  -- Override gg to land on the first entry, skipping the branch header line.
+  map(bufnr, "gg", function()
+    local win = view.get_win()
+    if win then vim.api.nvim_win_set_cursor(win, { HEADER + 1, 0 }) end
+  end, "Go to first buffer entry")
+
   map(bufnr, km.delete, function() delete_buf(false) end, "Delete buffer (:bdelete)")
   map(bufnr, km.wipe,   function() delete_buf(true)  end, "Wipe buffer (:bwipeout)")
   map(bufnr, km.close,  function() view.close() end,      "Close sidebar")
