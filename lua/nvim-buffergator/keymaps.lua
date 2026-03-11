@@ -52,14 +52,19 @@ local function open_buf(bufnr, cmd)
   end
 end
 
---- Return the bufnr of the entry under the cursor, or nil if on the header.
--- Accounts for the header lines at the top of the sidebar.
-local function current_bufnr()
+--- Return the entry table under the cursor, or nil if on the header.
+local function current_entry()
   local line = vim.api.nvim_win_get_cursor(0)[1]
   local idx  = line - HEADER
   if idx < 1 then return nil end
   local entries = require("nvim-buffergator.catalog").get_buffers()
-  local e = entries[idx]
+  return entries[idx]
+end
+
+--- Return the bufnr of the entry under the cursor, or nil if on the header.
+-- Accounts for the header lines at the top of the sidebar.
+local function current_bufnr()
+  local e = current_entry()
   return e and e.bufnr or nil
 end
 
@@ -150,6 +155,63 @@ function M.setup(bufnr)
   end, "Move to previous entry")
 
   map(bufnr, km.refresh, function() view.refresh() end, "Refresh buffer list")
+
+  -- Always show the full path of the entry under the cursor in the cmdline.
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer   = bufnr,
+    callback = function()
+      local e = current_entry()
+      if e and e.name ~= "" then
+        local full  = vim.fn.fnamemodify(e.name, ":~")
+        local base  = vim.fn.fnamemodify(full, ":t")
+        local root  = require("nvim-buffergator.catalog").get_git_root(e.name)
+        local chunks
+
+        if root then
+          local root_abbrev = vim.fn.fnamemodify(root, ":~")
+          if vim.startswith(full, root_abbrev .. "/") then
+            -- Split into: prefix-before-root / root-name / in-repo-dir / filename
+            local root_parent = vim.fn.fnamemodify(root_abbrev, ":h")
+            local root_name   = vim.fn.fnamemodify(root_abbrev, ":t")
+            local after_root  = full:sub(#root_abbrev + 2)  -- strip "root/"
+            local rel_dir     = vim.fn.fnamemodify(after_root, ":h")
+            local prefix      = (root_parent ~= "." and root_parent ~= "") and (root_parent .. "/") or ""
+            local rel_suffix  = (rel_dir ~= "." and rel_dir ~= "") and ("/" .. rel_dir .. "/") or "/"
+            chunks = {
+              { prefix,                "Comment"                },
+              { root_name,             "Directory"              },
+              { rel_suffix,            "Comment"                },
+              { base,                  "NvimBuffergatorFilename" },
+            }
+          end
+        end
+
+        if not chunks then
+          -- Fallback: no git root known yet — dim the directory, highlight filename
+          local dir = vim.fn.fnamemodify(full, ":h")
+          if dir == "." or dir == "" then
+            chunks = { { base, "NvimBuffergatorFilename" } }
+          else
+            chunks = {
+              { dir .. "/", "Comment"                },
+              { base,       "NvimBuffergatorFilename" },
+            }
+          end
+        end
+
+        vim.api.nvim_echo(chunks, false, {})
+      else
+        vim.api.nvim_echo({}, false, {})
+      end
+    end,
+  })
+
+  -- Clear the path from the cmdline when focus leaves the sidebar.
+  vim.api.nvim_create_autocmd("BufLeave", {
+    buffer   = bufnr,
+    once     = false,
+    callback = function() vim.api.nvim_echo({}, false, {}) end,
+  })
 
   -- Cycle through sort modes in order, notify the new mode.
   map(bufnr, km.cycle_sort, function()

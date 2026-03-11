@@ -200,6 +200,17 @@ function M.refresh_git_async(on_done)
   end
 end
 
+--- Return the git repo root for the given absolute file path, or nil.
+-- Reads from dir_root_cache populated by refresh_git_async(); no I/O.
+-- @param abs_path string  Absolute path of the file.
+-- @return string|nil
+function M.get_git_root(abs_path)
+  if not abs_path or abs_path == "" then return nil end
+  local dir = vim.fn.fnamemodify(abs_path, ":h")
+  local root = dir_root_cache[dir]
+  return root or nil
+end
+
 -- ── MRU tracking ─────────────────────────────────────────────────────────────
 
 -- Map from bufnr → vim.uv.hrtime() of the last BufEnter event.
@@ -255,6 +266,7 @@ local function make_entry(bufnr, current, alternate)
     bufnr        = bufnr,
     name         = name,         -- absolute path (used for sorting and git lookup)
     basename     = basename,     -- filename tail (used for highlight offset calc)
+    parentdir    = name ~= "" and vim.fn.fnamemodify(name, ":h") or "",  -- parent directory (used for filepath sort)
     display_name = display_name, -- what is actually rendered
     parent       = parent,       -- non-empty only in path=0 mode
     modified     = vim.bo[bufnr].modified,
@@ -268,7 +280,13 @@ end
 -- All use entry.name (absolute path) as a tiebreaker so the order is
 -- deterministic regardless of which path display mode is active.
 local sorters = {
-  filepath = function(a, b) return a.name < b.name end,
+  -- Sort by parent directory first, then basename within each directory.
+  -- Matches the original vim-buffergator behaviour: all files in a given
+  -- directory are grouped together before any of its subdirectories appear.
+  filepath = function(a, b)
+    if a.parentdir ~= b.parentdir then return a.parentdir < b.parentdir end
+    return a.basename < b.basename
+  end,
   bufnum   = function(a, b) return a.bufnr < b.bufnr end,
   basename = function(a, b)
     if a.basename ~= b.basename then return a.basename < b.basename end
