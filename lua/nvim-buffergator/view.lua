@@ -232,14 +232,22 @@ function M.open()
 end
 
 --- Close the sidebar if it is open.
+-- Restores focus to the window that was active before the sidebar was opened.
 function M.close()
   if not M.is_open() then return end
-  local win = state.win
+  local win      = state.win
+  local prev_win = M.get_prev_win()
   state.win = nil
   -- state.bufnr is intentionally not cleared: the buffer will be auto-wiped
   -- by bufhidden=wipe when its last window closes.
   if vim.api.nvim_win_is_valid(win) then
     vim.api.nvim_win_close(win, true)
+  end
+  -- Return focus to whichever editing window was active before the sidebar
+  -- was opened.  Without this, Neovim defaults to the first split after the
+  -- leftmost (sidebar) window is removed, ignoring which split the user was in.
+  if prev_win and vim.api.nvim_win_is_valid(prev_win) then
+    vim.api.nvim_set_current_win(prev_win)
   end
 end
 
