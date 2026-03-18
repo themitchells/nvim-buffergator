@@ -46,6 +46,7 @@ M.defaults = {
     open_vsplit = { "s", "<C-v>" },  -- open in vertical split
     open_split  = { "i", "<C-s>" },  -- open in horizontal split
     open_tab    = { "t", "<C-t>" },  -- open in new tab
+    rename      = "r",               -- rename/move file on disk
     delete      = "d",               -- :bdelete
     wipe        = "D",               -- :bwipeout
     close       = { "q", "<Esc>" },  -- close sidebar

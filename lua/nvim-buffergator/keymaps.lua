@@ -68,6 +68,88 @@ local function current_bufnr()
   return e and e.bufnr or nil
 end
 
+--- Rename/move the file of the buffer under the cursor.
+local function rename_buf()
+  local view = require("nvim-buffergator.view")
+  local e    = current_entry()
+  if not e then return end
+
+  local bufnr    = e.bufnr
+  local old_path = vim.api.nvim_buf_get_name(bufnr)
+  if old_path == "" then
+    vim.notify("nvim-buffergator: buffer has no file name", vim.log.levels.WARN)
+    return
+  end
+
+  vim.ui.input({
+    prompt     = "Rename to: ",
+    default    = old_path,
+    completion = "file",
+  }, function(new_path)
+    if not new_path or new_path == "" or new_path == old_path then return end
+
+    new_path = vim.fn.expand(new_path)
+
+    if vim.fn.filereadable(new_path) == 1 then
+      vim.notify("nvim-buffergator: destination already exists: " .. new_path, vim.log.levels.ERROR)
+      return
+    end
+
+    -- Create parent directories as needed
+    local new_dir = vim.fn.fnamemodify(new_path, ":h")
+    if vim.fn.isdirectory(new_dir) == 0 then
+      vim.fn.mkdir(new_dir, "p")
+    end
+
+    local old_undo   = vim.o.undofile and vim.fn.undofile(old_path) or nil
+    local new_undo   = vim.o.undofile and vim.fn.undofile(new_path) or nil
+    local old_exists = vim.fn.filereadable(old_path) == 1
+
+    if old_exists then
+      if vim.bo[bufnr].modified then
+        local ok, err = pcall(vim.api.nvim_buf_call, bufnr, function() vim.cmd("write") end)
+        if not ok then
+          vim.notify("nvim-buffergator: could not save buffer: " .. tostring(err), vim.log.levels.ERROR)
+          return
+        end
+      end
+      if vim.fn.rename(old_path, new_path) ~= 0 then
+        vim.notify("nvim-buffergator: failed to move file on disk", vim.log.levels.ERROR)
+        return
+      end
+    end
+
+    vim.api.nvim_buf_set_name(bufnr, new_path)
+
+    if vim.api.nvim_buf_is_loaded(bufnr) then
+      local ok, err = pcall(vim.api.nvim_buf_call, bufnr, function() vim.cmd("silent write!") end)
+      if not ok then
+        vim.notify("nvim-buffergator: could not write to new path: " .. tostring(err), vim.log.levels.ERROR)
+        return
+      end
+    else
+      -- Buffer is listed but not loaded; file already on disk at new_path — just clear state
+      vim.bo[bufnr].modified = false
+    end
+
+    if vim.fn.fnamemodify(old_path, ":e") ~= vim.fn.fnamemodify(new_path, ":e") then
+      vim.api.nvim_buf_call(bufnr, function() vim.cmd("filetype detect") end)
+    end
+
+    if old_undo and new_undo and vim.fn.filereadable(old_undo) == 1 then
+      local undo_dir = vim.fn.fnamemodify(new_undo, ":h")
+      if vim.fn.isdirectory(undo_dir) == 0 then vim.fn.mkdir(undo_dir, "p") end
+      vim.fn.rename(old_undo, new_undo)
+    end
+
+    vim.notify(string.format("Renamed: %s → %s",
+      vim.fn.fnamemodify(old_path, ":~:."),
+      vim.fn.fnamemodify(new_path, ":~:.")), vim.log.levels.INFO)
+
+    vim.schedule(function() view.refresh() end)
+  end)
+end
+
 --- Delete or wipe the buffer under the cursor, then refresh the sidebar.
 -- @param wipe boolean  true → :bwipeout, false → :bdelete
 local function delete_buf(wipe)
@@ -137,6 +219,7 @@ function M.setup(bufnr)
     if win then vim.api.nvim_win_set_cursor(win, { HEADER + 1, 0 }) end
   end, "Go to first buffer entry")
 
+  map(bufnr, km.rename, rename_buf,                        "Rename/move buffer file")
   map(bufnr, km.delete, function() delete_buf(false) end, "Delete buffer (:bdelete)")
   map(bufnr, km.wipe,   function() delete_buf(true)  end, "Wipe buffer (:bwipeout)")
   map(bufnr, km.close,  function() view.close() end,      "Close sidebar")
@@ -243,6 +326,7 @@ function M.setup(bufnr)
       string.format("  %-18s Open in vsplit",         fmt_key(km.open_vsplit)),
       string.format("  %-18s Open in split",          fmt_key(km.open_split)),
       string.format("  %-18s Open in tab",            fmt_key(km.open_tab)),
+      string.format("  %-18s Rename/move buffer",      fmt_key(km.rename)),
       string.format("  %-18s Delete buffer",          fmt_key(km.delete)),
       string.format("  %-18s Wipe buffer",            fmt_key(km.wipe)),
       string.format("  %-18s Close sidebar",          fmt_key(km.close)),
