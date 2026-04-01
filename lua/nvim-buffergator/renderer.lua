@@ -27,7 +27,8 @@ local catalog = require("nvim-buffergator.catalog")
 local ns      = vim.api.nvim_create_namespace("nvim-buffergator")
 
 --- Number of non-entry lines at the top of the sidebar (branch header).
-local HEADER_LINES = 1
+-- Header has moved to the winbar, so the buffer starts with entries directly.
+local HEADER_LINES = 0
 M.HEADER_LINES = HEADER_LINES
 
 --- Byte column where display_name begins (sum of all prefix chars).
@@ -75,7 +76,10 @@ local function def_name_hls()
   local lualine_norm = vim.api.nvim_get_hl(0, { name = "LualineFilenameNormalBold", link = false })
   local normal       = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
   local clean_fg     = (lualine_norm and lualine_norm.fg) and lualine_norm.fg or normal.fg
-  vim.api.nvim_set_hl(0, "NvimBuffergatorFilename", { fg = darken(clean_fg, 0.75), bold = true })
+  vim.api.nvim_set_hl(0, "NvimBuffergatorFilename",  { fg = darken(clean_fg, 0.75), bold = true })
+  -- Untracked file: same as Comment (dimmed, no bold) — matches the ? flag column
+  local comment = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
+  vim.api.nvim_set_hl(0, "NvimBuffergatorUntracked", { fg = comment.fg })
 end
 def_name_hls()
 -- Re-run after every ColorScheme event, but deferred via vim.schedule so
@@ -138,8 +142,10 @@ local function build_line(entry, max_display)
   end
 
   -- Filename colour: reflects the combination of buffer-dirty and git-dirty.
-  local buf_dirty = entry.modified
-  local git_dirty = entry.git_status ~= " "
+  -- Untracked (?) is treated separately from tracked-dirty (M A D R).
+  local buf_dirty   = entry.modified
+  local git_dirty   = entry.git_status ~= " " and entry.git_status ~= "?"
+  local untracked   = entry.git_status == "?"
   local name_hl
   if buf_dirty and git_dirty then
     name_hl = "NvimBuffergatorBothDirty"
@@ -147,6 +153,8 @@ local function build_line(entry, max_display)
     name_hl = "NvimBuffergatorBufDirty"
   elseif git_dirty then
     name_hl = "NvimBuffergatorGitDirty"
+  elseif untracked then
+    name_hl = "NvimBuffergatorUntracked"
   else
     name_hl = "NvimBuffergatorFilename"
   end
@@ -190,10 +198,37 @@ function M.render(sidebar_bufnr, context_win)
     if #e.display_name > max_display then max_display = #e.display_name end
   end
 
-  -- Build lines and highlight tables.
-  local header = branch and ("  @ " .. branch) or "  [no git]"
-  local lines  = { header }
-  local all_hl = { { { "Title", 0, -1 } } }  -- header → Title highlight
+  -- Count dirty buffers for the winbar indicators.
+  -- Untracked (?) is kept separate from tracked-dirty (M A D R) to match
+  -- the Comment vs DiagnosticInfo distinction already used in the entry flags.
+  local buf_dirty_count = 0
+  local git_dirty_count = 0
+  local untracked_count = 0
+  for _, e in ipairs(entries) do
+    if e.modified                then buf_dirty_count = buf_dirty_count + 1 end
+    if e.git_status == "?"       then untracked_count = untracked_count + 1
+    elseif e.git_status ~= " "  then git_dirty_count = git_dirty_count + 1
+    end
+  end
+
+  -- Build winbar string using %#HlGroup# statusline syntax.
+  -- Colors reuse the same groups as the buffer list entries.
+  local branch_str = branch and ("  @ " .. branch) or "  [no git]"
+  local winbar = "%#Title#" .. branch_str
+  if buf_dirty_count > 0 then
+    winbar = winbar .. "  %#NvimBuffergatorBufDirty#+" .. buf_dirty_count
+  end
+  if git_dirty_count > 0 then
+    winbar = winbar .. "  %#NvimBuffergatorGitDirty#~" .. git_dirty_count
+  end
+  if untracked_count > 0 then
+    winbar = winbar .. "  %#Comment#?" .. untracked_count
+  end
+  winbar = winbar .. "%*"
+
+  -- Build lines and highlight tables (no header row — lives in winbar now).
+  local lines  = {}
+  local all_hl = {}
 
   for _, entry in ipairs(entries) do
     local line, hl = build_line(entry, max_display)
@@ -217,7 +252,7 @@ function M.render(sidebar_bufnr, context_win)
   -- keeps it one column off-screen.
   local max_width = PREFIX + max_display + 1
 
-  return max_width, entries
+  return max_width, entries, winbar
 end
 
 return M

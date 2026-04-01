@@ -90,20 +90,16 @@ local function create_buf()
     callback = function() update_sel_hl(bufnr) end,
   })
 
-  -- Keep statusline and winbar blank even if lualine or another plugin
-  -- tries to set them.  OptionSet fires synchronously on each write to
-  -- the option, so this always wins regardless of plugin scheduling order.
-  -- The v:option_new guard prevents the re-entrant loop.
-  for _, opt in ipairs({ "statusline", "winbar" }) do
-    vim.api.nvim_create_autocmd("OptionSet", {
-      pattern  = opt,
-      callback = function()
-        if vim.api.nvim_get_current_buf() == bufnr and vim.v.option_new ~= " " then
-          vim.opt_local[opt] = " "
-        end
-      end,
-    })
-  end
+  -- Keep statusline blank even if lualine or another plugin tries to set it.
+  -- winbar is intentionally excluded — we manage it ourselves with the header.
+  vim.api.nvim_create_autocmd("OptionSet", {
+    pattern  = "statusline",
+    callback = function()
+      if vim.api.nvim_get_current_buf() == bufnr and vim.v.option_new ~= " " then
+        vim.opt_local.statusline = " "
+      end
+    end,
+  })
 
   state.bufnr = bufnr
   return bufnr
@@ -161,8 +157,9 @@ function M.refresh()
   -- on the nofile buffer), resolve current/alternate flags from prev_win.
   local context_win = vim.api.nvim_get_current_win()
   if context_win == state.win then context_win = state.prev_win end
-  local max_width = renderer.render(state.bufnr, context_win)
+  local max_width, _, winbar = renderer.render(state.bufnr, context_win)
   apply_resize(state.win, max_width)
+  vim.wo[state.win].winbar = winbar
 end
 
 --- Open the sidebar.
@@ -204,8 +201,9 @@ function M.open()
 
   -- Render immediately from cache so the sidebar is usable at once, even
   -- before git data arrives.
-  local max_width, entries = renderer.render(bufnr, state.prev_win)
+  local max_width, entries, winbar = renderer.render(bufnr, state.prev_win)
   apply_resize(win, max_width)
+  vim.wo[win].winbar = winbar
 
   -- Position cursor on the currently active buffer's entry.
   local prev_buf = vim.api.nvim_win_get_buf(state.prev_win)
