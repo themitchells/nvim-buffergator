@@ -151,11 +151,33 @@ local function rename_buf()
 end
 
 --- Delete or wipe the buffer under the cursor, then refresh the sidebar.
+-- Any window currently showing the buffer is switched to another buffer
+-- first so splits are preserved (mirrors :Bd / buf_close behaviour).
 -- @param wipe boolean  true → :bwipeout, false → :bdelete
 local function delete_buf(wipe)
   local view = require("nvim-buffergator.view")
   local b    = current_bufnr()
   if not b then return end
+
+  -- Find a replacement: prefer alternate buffer, then any other listed buffer.
+  local function replacement()
+    local alt = vim.fn.bufnr('#')
+    if alt ~= -1 and alt ~= b and vim.fn.buflisted(alt) == 1 then
+      return alt
+    end
+    for _, info in ipairs(vim.fn.getbufinfo({ buflisted = 1 })) do
+      if info.bufnr ~= b then return info.bufnr end
+    end
+  end
+
+  -- Switch every non-sidebar window showing this buffer before deleting.
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if win ~= view.get_win() and vim.api.nvim_win_get_buf(win) == b then
+      local repl = replacement()
+      vim.api.nvim_win_set_buf(win, repl or vim.api.nvim_create_buf(true, false))
+    end
+  end
+
   local cmd = wipe and "bwipeout" or "bdelete"
   local ok, err = pcall(vim.cmd, cmd .. " " .. b)
   if not ok then
