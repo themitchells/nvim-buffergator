@@ -104,7 +104,24 @@ function M.refresh_git_async(on_done)
 
   -- Phase 2: fire git status + branch jobs for all known roots.
   local function run_status_phase()
-    local root_list = vim.tbl_keys(roots)
+    -- Build per-root file lists so git status is scoped to open buffers only.
+    -- This avoids a full tree walk and makes -uall unnecessary: git reports
+    -- ?? for untracked files when they are named explicitly.
+    local root_files = {}
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+      if is_valid(bufnr) then
+        local name = vim.api.nvim_buf_get_name(bufnr)
+        if name ~= "" then
+          local root = dir_root_cache[vim.fn.fnamemodify(name, ":h")]
+          if root then
+            if not root_files[root] then root_files[root] = {} end
+            root_files[root][#root_files[root] + 1] = name
+          end
+        end
+      end
+    end
+
+    local root_list = vim.tbl_keys(root_files)
     local statuses  = {}
     local branch    = nil
     local pending   = #root_list + 1  -- +1 accounts for the branch job
@@ -131,7 +148,9 @@ function M.refresh_git_async(on_done)
         end)
 
       for _, root in ipairs(root_list) do
-        vim.system({"git", "-C", root, "status", "--porcelain", "-uall"}, {text = true},
+        local cmd = {"git", "-C", root, "status", "--porcelain", "--"}
+        vim.list_extend(cmd, root_files[root])
+        vim.system(cmd, {text = true},
           function(r)
             if r.code == 0 then
               parse_status_output(root, r.stdout, statuses)
@@ -145,8 +164,10 @@ function M.refresh_git_async(on_done)
       if vim.v.shell_error == 0 and b ~= "" and b ~= "HEAD" then branch = b end
 
       for _, root in ipairs(root_list) do
+        local paths = table.concat(
+          vim.tbl_map(vim.fn.shellescape, root_files[root]), " ")
         local lines = vim.fn.systemlist(
-          "git -C " .. vim.fn.shellescape(root) .. " status --porcelain -uall 2>/dev/null"
+          "git -C " .. vim.fn.shellescape(root) .. " status --porcelain -- " .. paths .. " 2>/dev/null"
         )
         if vim.v.shell_error == 0 then
           parse_status_output(root, table.concat(lines, "\n"), statuses)
