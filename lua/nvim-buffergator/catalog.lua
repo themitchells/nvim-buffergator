@@ -131,7 +131,7 @@ function M.refresh_git_async(on_done)
         end)
 
       for _, root in ipairs(root_list) do
-        vim.system({"git", "-C", root, "status", "--porcelain"}, {text = true},
+        vim.system({"git", "-C", root, "status", "--porcelain", "-uall"}, {text = true},
           function(r)
             if r.code == 0 then
               parse_status_output(root, r.stdout, statuses)
@@ -146,7 +146,7 @@ function M.refresh_git_async(on_done)
 
       for _, root in ipairs(root_list) do
         local lines = vim.fn.systemlist(
-          "git -C " .. vim.fn.shellescape(root) .. " status --porcelain 2>/dev/null"
+          "git -C " .. vim.fn.shellescape(root) .. " status --porcelain -uall 2>/dev/null"
         )
         if vim.v.shell_error == 0 then
           parse_status_output(root, table.concat(lines, "\n"), statuses)
