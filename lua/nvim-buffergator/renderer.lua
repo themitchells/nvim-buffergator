@@ -34,13 +34,20 @@ M.HEADER_LINES = HEADER_LINES
 --- Byte column where display_name begins (sum of all prefix chars).
 local PREFIX = 11
 
--- Git status character → highlight group for the G flag column.
+-- Git status character → highlight group for the G flag column (unstaged / workdir).
 local git_hl = {
-  M = "DiagnosticWarn",   -- modified in working tree
-  A = "DiagnosticInfo",   -- added / staged
-  D = "DiagnosticError",  -- deleted
-  R = "DiagnosticInfo",   -- renamed
+  M = "DiagnosticWarn",   -- modified in working tree (unstaged)
+  D = "DiagnosticError",  -- deleted (unstaged)
   ["?"] = "Comment",      -- untracked
+  ["!"] = "Comment",      -- ignored
+}
+-- Highlight for staged (index) changes — uses DiagnosticInfo (blue) to match gitsigns.
+local git_staged_hl = {
+  M = "DiagnosticInfo",   -- modified in index (staged)
+  A = "DiagnosticInfo",   -- added to index
+  D = "DiagnosticInfo",   -- deleted from index
+  R = "DiagnosticInfo",   -- renamed in index
+  C = "DiagnosticInfo",   -- copied in index
 }
 
 --- Scale each RGB channel of an integer colour by factor (0.0–1.0).
@@ -80,6 +87,11 @@ local function def_name_hls()
   -- Untracked file: same as Comment (dimmed, no bold) — matches the ? flag column
   local comment = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
   vim.api.nvim_set_hl(0, "NvimBuffergatorUntracked", { fg = comment.fg })
+  -- Ignored file: same as Comment but with italic to distinguish from untracked
+  vim.api.nvim_set_hl(0, "NvimBuffergatorIgnored",   { fg = comment.fg, italic = true })
+  -- Staged-only file: blue (DiagnosticInfo) to match gitsigns staged signs
+  local dinfo = vim.api.nvim_get_hl(0, { name = "DiagnosticInfo", link = false })
+  vim.api.nvim_set_hl(0, "NvimBuffergatorGitStaged", { fg = dinfo.fg })
 end
 def_name_hls()
 -- Re-run after every ColorScheme event, but deferred via vim.schedule so
@@ -98,7 +110,9 @@ local function build_line(entry, max_display)
   local num_str  = string.format("[%3d]", entry.bufnr)
   local cur_flag = entry.current  and ">" or (entry.alternate and "#" or " ")
   local mod_flag = entry.modified and "+" or " "
-  local git_flag = (entry.git_status ~= " ") and entry.git_status or " "
+  -- Show workdir (unstaged) char preferentially; fall back to index (staged) char.
+  local idx, wdt = entry.git_index, entry.git_workdir
+  local git_flag = (wdt ~= " " and wdt or (idx ~= " " and idx or " "))
 
   local display_name = entry.display_name
   local parent       = entry.parent
@@ -135,26 +149,34 @@ local function build_line(entry, max_display)
     hl[#hl+1] = { "DiagnosticWarn", 7, 8 }
   end
 
-  -- Git status character
-  local ghl = git_hl[entry.git_status]
-  if ghl then
-    hl[#hl+1] = { ghl, 8, 9 }
+  -- Git status character: unstaged uses git_hl (orange), staged-only uses git_staged_hl (blue).
+  local git_flag_hl
+  if wdt ~= " " then
+    git_flag_hl = git_hl[wdt]
+  elseif idx ~= " " then
+    git_flag_hl = git_staged_hl[idx]
   end
+  if git_flag_hl then hl[#hl+1] = { git_flag_hl, 8, 9 } end
 
-  -- Filename colour: reflects the combination of buffer-dirty and git-dirty.
-  -- Untracked (?) is treated separately from tracked-dirty (M A D R).
-  local buf_dirty   = entry.modified
-  local git_dirty   = entry.git_status ~= " " and entry.git_status ~= "?"
-  local untracked   = entry.git_status == "?"
+  -- Filename colour.
+  local buf_dirty    = entry.modified
+  local unstaged     = wdt ~= " " and wdt ~= "?" and wdt ~= "!"
+  local staged_only  = not unstaged and idx ~= " " and idx ~= "?" and idx ~= "!"
+  local untracked    = idx == "?" or wdt == "?"
+  local ignored      = idx == "!" or wdt == "!"
   local name_hl
-  if buf_dirty and git_dirty then
+  if buf_dirty and unstaged then
     name_hl = "NvimBuffergatorBothDirty"
   elseif buf_dirty then
     name_hl = "NvimBuffergatorBufDirty"
-  elseif git_dirty then
+  elseif unstaged then
     name_hl = "NvimBuffergatorGitDirty"
+  elseif staged_only then
+    name_hl = "NvimBuffergatorGitStaged"
   elseif untracked then
     name_hl = "NvimBuffergatorUntracked"
+  elseif ignored then
+    name_hl = "NvimBuffergatorIgnored"
   else
     name_hl = "NvimBuffergatorFilename"
   end
@@ -201,13 +223,21 @@ function M.render(sidebar_bufnr, context_win)
   -- Count dirty buffers for the winbar indicators.
   -- Untracked (?) is kept separate from tracked-dirty (M A D R) to match
   -- the Comment vs DiagnosticInfo distinction already used in the entry flags.
-  local buf_dirty_count = 0
-  local git_dirty_count = 0
-  local untracked_count = 0
+  local buf_dirty_count  = 0
+  local git_dirty_count  = 0
+  local git_staged_count = 0
+  local untracked_count  = 0
   for _, e in ipairs(entries) do
-    if e.modified                then buf_dirty_count = buf_dirty_count + 1 end
-    if e.git_status == "?"       then untracked_count = untracked_count + 1
-    elseif e.git_status ~= " "  then git_dirty_count = git_dirty_count + 1
+    if e.modified then buf_dirty_count = buf_dirty_count + 1 end
+    local ei, ew = e.git_index, e.git_workdir
+    if ei == "?" or ew == "?" then
+      untracked_count = untracked_count + 1
+    elseif ei ~= "!" and ew ~= "!" then
+      if ew ~= " " then
+        git_dirty_count = git_dirty_count + 1   -- has unstaged changes
+      elseif ei ~= " " then
+        git_staged_count = git_staged_count + 1  -- staged-only
+      end
     end
   end
 
@@ -220,6 +250,9 @@ function M.render(sidebar_bufnr, context_win)
   end
   if git_dirty_count > 0 then
     winbar = winbar .. "  %#NvimBuffergatorGitDirty#~" .. git_dirty_count
+  end
+  if git_staged_count > 0 then
+    winbar = winbar .. "  %#NvimBuffergatorGitStaged#s" .. git_staged_count
   end
   if untracked_count > 0 then
     winbar = winbar .. "  %#Comment#?" .. untracked_count

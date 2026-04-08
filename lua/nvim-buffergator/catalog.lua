@@ -53,7 +53,9 @@ end
 --   all in parallel.  When the last job completes, git_cache is updated
 --   and on_done() is called on the main thread.
 
---- Parse `git status --porcelain` output into the out table (abs_path → char).
+--- Parse `git status --porcelain` output into the out table.
+-- Stores { index, workdir } so callers can distinguish staged vs unstaged.
+-- Special cases: "??" → { index="?", workdir="?" }, "!!" → { index="!", workdir="!" }.
 local function parse_status_output(root, text, out)
   for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
     if #line >= 4 then
@@ -62,10 +64,13 @@ local function parse_status_output(root, text, out)
       -- Renames are reported as "old -> new"; take the destination.
       path = path:match("^.* %-> (.+)$") or path
       local abs = root .. "/" .. path
-      -- Prefer working-tree status (col 2); fall back to index (col 1).
-      local s = xy:sub(2, 2)
-      if s == " " then s = xy:sub(1, 1) end
-      out[abs] = s
+      if xy == "!!" then
+        out[abs] = { index = "!", workdir = "!" }
+      elseif xy == "??" then
+        out[abs] = { index = "?", workdir = "?" }
+      else
+        out[abs] = { index = xy:sub(1, 1), workdir = xy:sub(2, 2) }
+      end
     end
   end
 end
@@ -148,7 +153,7 @@ function M.refresh_git_async(on_done)
         end)
 
       for _, root in ipairs(root_list) do
-        local cmd = {"git", "-C", root, "status", "--porcelain", "--"}
+        local cmd = {"git", "-C", root, "status", "--porcelain", "--ignored", "--"}
         vim.list_extend(cmd, root_files[root])
         vim.system(cmd, {text = true},
           function(r)
@@ -167,7 +172,7 @@ function M.refresh_git_async(on_done)
         local paths = table.concat(
           vim.tbl_map(vim.fn.shellescape, root_files[root]), " ")
         local lines = vim.fn.systemlist(
-          "git -C " .. vim.fn.shellescape(root) .. " status --porcelain -- " .. paths .. " 2>/dev/null"
+          "git -C " .. vim.fn.shellescape(root) .. " status --porcelain --ignored -- " .. paths .. " 2>/dev/null"
         )
         if vim.v.shell_error == 0 then
           parse_status_output(root, table.concat(lines, "\n"), statuses)
@@ -293,7 +298,8 @@ local function make_entry(bufnr, current, alternate)
     modified     = vim.bo[bufnr].modified,
     current      = (bufnr == current),
     alternate    = (bufnr == alternate),
-    git_status   = (name ~= "" and git_cache.statuses[name]) or " ",
+    git_index    = (name ~= "" and git_cache.statuses[name] and git_cache.statuses[name].index)   or " ",
+    git_workdir  = (name ~= "" and git_cache.statuses[name] and git_cache.statuses[name].workdir) or " ",
   }
 end
 
