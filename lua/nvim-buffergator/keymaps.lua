@@ -204,6 +204,57 @@ local function fmt_key(k)
   return k ~= false and tostring(k) or "(disabled)"
 end
 
+--- Columns available for a single-line cmdline message before Neovim wraps it
+-- onto a second row and issues the "Press ENTER" hit-enter prompt.
+-- Reserves the trailing showcmd area (~10 cols when 'showcmd' is on) and one
+-- extra column so the text never fills the final cell.
+local function cmdline_budget()
+  local budget = vim.o.columns - 1
+  if vim.o.showcmd then budget = budget - 10 end
+  return budget > 0 and budget or 1
+end
+
+--- Truncate a list of {text, hl} echo chunks from the LEFT so their combined
+-- display width fits within `budget`, prepending an ellipsis. The filename is
+-- the rightmost chunk, so left-truncation always keeps it visible.
+-- Prevents a long path echo (e.g. when the git root is not yet resolved on a
+-- slow filesystem, forcing the full-path fallback) from triggering hit-enter.
+local function truncate_chunks(chunks, budget)
+  local w = vim.fn.strdisplaywidth
+  local total = 0
+  for _, c in ipairs(chunks) do total = total + w(c[1]) end
+  if total <= budget then return chunks end
+
+  local ell   = "…"
+  local avail = budget - w(ell)
+  if avail < 0 then avail = 0 end
+
+  -- Accumulate chunks from the right until `avail` is filled; partially clip
+  -- the first chunk that does not fit, keeping its rightmost columns.
+  local kept, used = {}, 0
+  for i = #chunks, 1, -1 do
+    local text, hl = chunks[i][1], chunks[i][2]
+    local tw = w(text)
+    if used + tw <= avail then
+      table.insert(kept, 1, { text, hl })
+      used = used + tw
+    else
+      local room = avail - used
+      if room > 0 then
+        local n, start = vim.fn.strchars(text), 0
+        while start < n and w(vim.fn.strcharpart(text, start)) > room do
+          start = start + 1
+        end
+        local cut = vim.fn.strcharpart(text, start)
+        if cut ~= "" then table.insert(kept, 1, { cut, hl }) end
+      end
+      break
+    end
+  end
+  table.insert(kept, 1, { ell, "Comment" })
+  return kept
+end
+
 -- ── Setup ─────────────────────────────────────────────────────────────────────
 
 --- Attach all buffer-local keymaps to bufnr.
@@ -310,7 +361,7 @@ function M.setup(bufnr)
           end
         end
 
-        vim.api.nvim_echo(chunks, false, {})
+        vim.api.nvim_echo(truncate_chunks(chunks, cmdline_budget()), false, {})
       else
         vim.api.nvim_echo({}, false, {})
       end
