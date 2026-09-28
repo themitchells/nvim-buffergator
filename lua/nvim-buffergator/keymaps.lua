@@ -68,6 +68,35 @@ local function current_bufnr()
   return e and e.bufnr or nil
 end
 
+--- Return true if entry has any unsaved or git-dirty indicator.
+local function is_dirty(e)
+  return e.modified or e.git_workdir ~= " " or e.git_index ~= " "
+end
+
+--- Move the cursor to the next/previous dirty entry, wrapping around.
+-- @param direction integer  1 for next, -1 for previous.
+local function goto_dirty(direction)
+  local view = require("nvim-buffergator.view")
+  local win  = view.get_win()
+  if not win then return end
+
+  local entries = require("nvim-buffergator.catalog").get_buffers()
+  local n = #entries
+  if n == 0 then return end
+
+  local cur_idx = vim.api.nvim_win_get_cursor(win)[1] - HEADER
+
+  for step = 1, n do
+    local idx = ((cur_idx - 1 + step * direction) % n) + 1
+    if is_dirty(entries[idx]) then
+      vim.api.nvim_win_set_cursor(win, { HEADER + idx, 0 })
+      return
+    end
+  end
+
+  vim.notify("nvim-buffergator: no modified buffers", vim.log.levels.INFO)
+end
+
 --- Rename/move the file of the buffer under the cursor.
 local function rename_buf()
   local view = require("nvim-buffergator.view")
@@ -316,6 +345,9 @@ function M.setup(bufnr)
     end
   end, "Move to previous entry")
 
+  map(bufnr, km.next_modified, function() goto_dirty(1)  end, "Jump to next modified buffer")
+  map(bufnr, km.prev_modified, function() goto_dirty(-1) end, "Jump to previous modified buffer")
+
   map(bufnr, km.refresh, function() view.refresh() end, "Refresh buffer list")
 
   -- Always show the full path of the entry under the cursor in the cmdline.
@@ -405,6 +437,8 @@ function M.setup(bufnr)
       string.format("  %-18s Close sidebar",          fmt_key(km.close)),
       string.format("  %-18s Next entry",             fmt_key(km.next)),
       string.format("  %-18s Previous entry",         fmt_key(km.prev)),
+      string.format("  %-18s Next modified",          fmt_key(km.next_modified)),
+      string.format("  %-18s Previous modified",      fmt_key(km.prev_modified)),
       string.format("  %-18s Cycle sort mode",        fmt_key(km.cycle_sort)),
       string.format("  %-18s Refresh",                fmt_key(km.refresh)),
       string.format("  %-18s This help",              fmt_key(km.help)),
